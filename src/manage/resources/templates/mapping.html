@@ -31,9 +31,9 @@
                     <thead><tr><th>Plaid account</th><th>Type</th><th>Firefly asset account</th><th>Enabled</th></tr></thead>
                     <tbody>
                     <tr th:each="row : ${rows}" th:data-account-id="${row.account.id}">
-                        <td th:text="|${row.account.name} ${row.account.mask != null ? '…' + row.account.mask : ''}|">Card …1234</td>
-                        <td th:text="|${row.account.type} ${row.account.subtype ?: ''}|">credit card</td>
-                        <td>
+                        <td class="account-name" th:text="|${row.account.name} ${row.account.mask != null ? '…' + row.account.mask : ''}|">Card …1234</td>
+                        <td class="account-type" th:text="|${row.account.type} ${row.account.subtype ?: ''}|">credit card</td>
+                        <td class="account-target">
                             <select name="fireflyAccountId" class="form-control">
                                 <option value="">— not mapped —</option>
                                 <option value="new" th:selected="${row.newAccountName != null}">+ Create a new asset account</option>
@@ -45,10 +45,10 @@
                                    th:value="${row.newAccountName ?: row.account.name}"
                                    th:hidden="${row.newAccountName == null}">
                         </td>
-                        <td><input type="checkbox" name="enabled"
+                        <td class="account-enabled"><label class="checkbox"><input type="checkbox" name="enabled"
                                    th:checked="${row.account.enabled
                                        or (fresh and (row.newAccountName != null or row.suggestedFireflyAccountId != null))
-                                       or (row.suggestedFireflyAccountId != null and predecessor != null)}"></td>
+                                       or (row.suggestedFireflyAccountId != null and predecessor != null)}"><span class="enabled-label">Enabled</span></label></td>
                     </tr>
                     </tbody>
                 </table>

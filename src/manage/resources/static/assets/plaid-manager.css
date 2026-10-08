@@ -343,6 +343,11 @@ fieldset.form-group { border: 0; padding: 0; }
 .form-control:focus { outline: none; border-color: var(--focus); box-shadow: 0 0 0 1px var(--focus); }
 select.form-control { min-width: 12rem; }
 .new-account-name { margin-top: 6px; }
+/* Mapping: the checkbox label is only shown once rows stack; it still names the checkbox. */
+.accounts .account-enabled .checkbox { display: inline-flex; }
+.accounts .enabled-label {
+    position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap;
+}
 .checkbox { display: flex; align-items: flex-start; gap: 8px; font-size: 14px; cursor: pointer; }
 .checkbox input { flex: none; width: 18px; height: 18px; margin: 1px 0 0; accent-color: var(--primary); }
 fieldset .checkbox + .checkbox { margin-top: 4px; }
@@ -360,4 +365,17 @@ fieldset .checkbox + .checkbox { margin-top: 4px; }
     .actions .btn { flex: 1 1 calc(50% - 4px); }
     .actions .btn-danger { margin-left: 0; }
     .form-actions .btn { width: 100%; }
+    /* Mapping rows stack into cards: name and type, then the Firefly account, then Enabled. */
+    .table-responsive:has(.accounts) { overflow-x: visible; }
+    .accounts thead { display: none; }
+    .accounts, .accounts tbody, .accounts tr, .accounts td { display: block; }
+    .accounts tr { padding: 10px 8px; border-top: 1px solid var(--table-border); }
+    .accounts tbody tr:first-child { border-top: 0; }
+    .table.accounts td { min-width: 0; padding: 0; border-top: 0; }
+    .accounts .account-name { font-weight: 600; color: var(--heading); }
+    .accounts .account-type { font-size: 13px; color: var(--muted); }
+    .accounts .account-target { margin-top: 8px; }
+    .accounts select.form-control { min-width: 0; }
+    .accounts .account-enabled { margin-top: 8px; }
+    .accounts .enabled-label { position: static; width: auto; height: auto; overflow: visible; clip: auto; }
 }
