@@ -107,3 +107,12 @@ tasks.withType<KotlinCompile> {
 tasks.withType<Test> {
     useJUnitPlatform()
 }
+
+// Local change: the compiled tests and their runtime classpath, for nix/vm-checks.nix to run
+// in a NixOS VM next to a real Firefly III.
+tasks.register<Sync>("vmCheckDist") {
+    into(layout.buildDirectory.dir("vm-check"))
+    into("lib") { from(configurations.testRuntimeClasspath) }
+    into("classes/main") { from(sourceSets.main.get().output) }
+    into("classes/test") { from(sourceSets.test.get().output) }
+}

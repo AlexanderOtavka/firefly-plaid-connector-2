@@ -1,5 +1,6 @@
 package net.djvk.fireflyPlaidConnector2.manage.firefly
 
+import io.ktor.client.call.*
 import io.ktor.client.plugins.*
 import io.ktor.http.*
 import kotlinx.coroutines.sync.Mutex
@@ -9,6 +10,7 @@ import net.djvk.fireflyPlaidConnector2.api.firefly.models.AccountRoleProperty
 import net.djvk.fireflyPlaidConnector2.api.firefly.models.AccountStore
 import net.djvk.fireflyPlaidConnector2.api.firefly.models.AccountTypeFilter
 import net.djvk.fireflyPlaidConnector2.api.firefly.models.CreditCardType
+import net.djvk.fireflyPlaidConnector2.api.firefly.models.FireflyApiError
 import net.djvk.fireflyPlaidConnector2.api.firefly.models.ShortAccountTypeProperty
 import net.djvk.fireflyPlaidConnector2.manage.MANAGE_MODE
 import net.djvk.fireflyPlaidConnector2.manage.ManageException
@@ -98,7 +100,9 @@ class PatFireflyDirectory(
             accountsApi.storeAccount(store).body().data
         } catch (e: ClientRequestException) {
             if (e.response.status == HttpStatusCode.UnprocessableEntity) {
-                throw ManageException(422, "Firefly refused to create \"${account.name}\"; is the name already in use?")
+                // Firefly's own reason, e.g. "This account name is already in use."
+                val reason = runCatching { e.response.body<FireflyApiError>().message }.getOrNull()
+                throw ManageException(422, "Firefly refused to create \"${account.name}\": ${reason ?: "validation failed"}")
             }
             throw e
         }

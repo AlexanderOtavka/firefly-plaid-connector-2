@@ -139,3 +139,16 @@ changes.
   backfill sets. Names already in Firefly are refused before anything is created; if a later
   step fails, the error names what was created, and a reload preselects it by name.
 - `MappingEntry`/`MappingChange` gain `newFireflyAccountName`; `saveMapping` is `suspend`.
+
+## 2026-10-08: creating asset accounts against a real Firefly III
+
+- `AccountStore` (the generated `POST /api/v1/accounts` body) omits null fields. Jackson wrote
+  every unset field as `null`, and Firefly III validates a present null, so `"currency_id":
+  null` failed "must be a number" and every account the mapping page tried to create was
+  refused with a 422.
+- A refused create now shows Firefly's own message rather than guessing the name is taken.
+- `nix/vm-checks.nix` (`checks.<system>.firefly-accounts`, Linux only): a NixOS VM runs Firefly
+  III, registers a user, mints a personal access token, and runs `FireflyVmCheck.kt` (in the
+  test sources, not a JUnit test) to create each kind of asset account and a duplicate through
+  `PatFireflyDirectory`, with the client wired as `ApiConfiguration` wires it. The Gradle task
+  `vmCheckDist` collects the compiled tests and their runtime classpath for it.

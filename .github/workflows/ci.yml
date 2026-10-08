@@ -32,7 +32,8 @@ jobs:
       - uses: DeterminateSystems/determinate-nix-action@v3
 
       # Builds the jar and the image from the pinned deps.json, and runs the Gradle tests,
-      # the dashboard's against a throwaway PostgreSQL.
+      # the dashboard's against a throwaway PostgreSQL, and the NixOS VM checks against a
+      # real Firefly III (KVM, which hosted Linux runners have).
       - name: nix flake check
         run: nix flake check -L
 
