@@ -135,9 +135,11 @@
       event.preventDefault();
       const accounts = Array.from(form.querySelectorAll("tr[data-account-id]")).map(function (row) {
         const selected = row.querySelector('select[name="fireflyAccountId"]').value;
+        const isNew = selected === "new";
         return {
           accountId: Number(row.dataset.accountId),
-          fireflyAccountId: selected ? Number(selected) : null,
+          fireflyAccountId: selected && !isNew ? Number(selected) : null,
+          newFireflyAccountName: isNew ? row.querySelector('input[name="newFireflyAccountName"]').value : null,
           enabled: row.querySelector('input[name="enabled"]').checked,
         };
       });
@@ -148,6 +150,16 @@
         showMessage(e.message);
       }
     }
+  });
+
+  // Mapping page: the name field is only for "Create a new asset account".
+  document.addEventListener("change", function (event) {
+    const select = event.target;
+    if (select.name !== "fireflyAccountId") return;
+    const name = select.parentElement.querySelector('input[name="newFireflyAccountName"]');
+    if (!name) return;
+    name.hidden = select.value !== "new";
+    if (!name.hidden) name.focus();
   });
 
   // Timestamps are rendered in the server's zone (UTC); show them in the browser's instead.

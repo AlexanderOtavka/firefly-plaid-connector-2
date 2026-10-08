@@ -137,6 +137,8 @@ data class BackfillRunView(
 data class MappingRowView(
     val account: AccountView,
     val suggestedFireflyAccountId: Int?,
+    /** Set when the page defaults this account to a new Firefly account of this name. */
+    val newAccountName: String? = null,
 )
 
 data class LinkTokenRequest(val mode: LinkMode, val itemId: Long? = null)
@@ -149,7 +151,12 @@ data class ExchangeResponse(val itemId: Long)
 
 data class MappingRequest(val accounts: List<MappingEntry>)
 
-data class MappingEntry(val accountId: Long, val fireflyAccountId: Int? = null, val enabled: Boolean = false)
+data class MappingEntry(
+    val accountId: Long,
+    val fireflyAccountId: Int? = null,
+    val enabled: Boolean = false,
+    val newFireflyAccountName: String? = null,
+)
 
 data class BackfillRequest(
     val itemId: Long,

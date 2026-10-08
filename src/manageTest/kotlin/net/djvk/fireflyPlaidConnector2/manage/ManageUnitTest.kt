@@ -10,6 +10,7 @@ import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.headersOf
 import kotlinx.coroutines.runBlocking
+import net.djvk.fireflyPlaidConnector2.api.firefly.models.AccountRoleProperty
 import net.djvk.fireflyPlaidConnector2.api.plaid.PlaidApiWrapperTest
 import net.djvk.fireflyPlaidConnector2.api.plaid.models.Products
 import net.djvk.fireflyPlaidConnector2.manage.db.BackfillRunRow
@@ -18,6 +19,7 @@ import net.djvk.fireflyPlaidConnector2.manage.db.ItemStatus
 import net.djvk.fireflyPlaidConnector2.manage.db.PlaidAccountRow
 import net.djvk.fireflyPlaidConnector2.manage.db.PlaidItemRow
 import net.djvk.fireflyPlaidConnector2.manage.db.Redaction
+import net.djvk.fireflyPlaidConnector2.manage.firefly.FireflyAccount
 import net.djvk.fireflyPlaidConnector2.manage.k8s.KubernetesClusterGateway
 import net.djvk.fireflyPlaidConnector2.manage.k8s.classifyJob
 import net.djvk.fireflyPlaidConnector2.manage.k8s.renderBackfillJob
@@ -207,6 +209,46 @@ class ManageRulesTest {
         assertThat(ItemService.suggestFrom(account(11, null, "2222", "checking", null), old)).isEqualTo(9)
         assertThat(ItemService.suggestFrom(account(12, null, "2222", "savings", null), old)).isNull()
         assertThat(ItemService.suggestFrom(account(13, "p2", null, "credit card", null), old)).isNull()
+    }
+
+    private fun linked(id: Long, name: String, mask: String?, type: String = "credit", subtype: String? = "credit card") =
+        PlaidAccountRow(
+            id = id, itemId = 1, plaidAccountId = "acc-$id", persistentAccountId = null, name = name,
+            mask = mask, type = type, subtype = subtype, fireflyAccountId = null, enabled = false,
+        )
+
+    @Test
+    fun `new Firefly accounts get a role from the Plaid type`() {
+        assertThat(ItemService.roleFor(linked(1, "Card", null))).isEqualTo(AccountRoleProperty.ccAsset)
+        assertThat(ItemService.roleFor(linked(2, "Savings", null, "depository", "savings"))).isEqualTo(AccountRoleProperty.savingAsset)
+        assertThat(ItemService.roleFor(linked(3, "Checking", null, "depository", "checking"))).isEqualTo(AccountRoleProperty.defaultAsset)
+        assertThat(ItemService.roleFor(linked(4, "Brokerage", null, "investment", "brokerage"))).isEqualTo(AccountRoleProperty.defaultAsset)
+    }
+
+    @Test
+    fun `new links default to new accounts, or to an unused Firefly account of the same name`() {
+        val firefly = listOf(
+            FireflyAccount(8, "Example Card", "ccAsset", true),
+            FireflyAccount(9, "Checking", "defaultAsset", true),
+            FireflyAccount(10, "Old Savings", "savingAsset", false),
+        )
+        val own = listOf(
+            linked(1, "Example Card", "1234"),                         // same name, unused: reuse it
+            linked(2, "Checking", "5555", "depository", "checking"), // same name, in use: new, with mask
+            linked(3, "Old Savings", "7777", "depository", "savings"), // inactive namesake: new, with mask
+            linked(4, "Joint", "1111", "depository", "checking"),   // repeated in the Item: both get masks
+            linked(5, "Joint", "2222", "depository", "checking"),
+            linked(6, "Mortgage", null, "loan", "mortgage"),        // nothing like it: plain name
+            linked(7, "Replaced", "3333"),                          // the predecessor's suggestion wins
+        )
+        val proposed = ItemService.propose(own, mapOf(7L to 42), firefly, inUse = setOf(9))
+        assertThat(proposed[1]).isEqualTo(MappingProposal(8, null))
+        assertThat(proposed[2]).isEqualTo(MappingProposal(null, "Checking …5555"))
+        assertThat(proposed[3]).isEqualTo(MappingProposal(null, "Old Savings …7777"))
+        assertThat(proposed[4]).isEqualTo(MappingProposal(null, "Joint …1111"))
+        assertThat(proposed[5]).isEqualTo(MappingProposal(null, "Joint …2222"))
+        assertThat(proposed[6]).isEqualTo(MappingProposal(null, "Mortgage"))
+        assertThat(proposed[7]).isEqualTo(MappingProposal(42, null))
     }
 
     @Test

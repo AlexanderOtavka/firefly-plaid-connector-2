@@ -125,3 +125,17 @@ changes.
   III recalculates the running balance of every later transaction in the account on each
   non-batch store, one commit per row, so a back-dated backfill insert could take over a minute on
   a server with slow disks, and the first timeout ended the Job.
+
+## 2026-10-07: mapping creates Firefly asset accounts
+
+- On a new link (no account of the Item mapped yet), each account the predecessor's mapping
+  does not cover defaults to **Create a new asset account**, enabled, named after the Plaid
+  account (mask appended when that name is taken), or to an active Firefly account of the
+  same name that no enabled account uses. `ItemService.propose` decides; the name is editable.
+- Saving creates them through `POST /api/v1/accounts` (`FireflyDirectory.createAssetAccount`,
+  with the connector's personal access token) before the mapping transaction: role
+  `ccAsset` (monthly full, payment date the 1st) for credit, `savingAsset` for savings-like
+  depository subtypes, else `defaultAsset`; default currency; no opening balance, which a
+  backfill sets. Names already in Firefly are refused before anything is created; if a later
+  step fails, the error names what was created, and a reload preselects it by name.
+- `MappingEntry`/`MappingChange` gain `newFireflyAccountName`; `saveMapping` is `suspend`.
