@@ -5,8 +5,9 @@ on:
   push:
     branches:
       - main
-  # The weekly update dispatches this on its branch (a PR opened with GITHUB_TOKEN gets no
-  # pull_request run), and on main after merging it (nor does that push get a push run).
+  # The weekly update dispatches this on its branch (a PR opened with GITHUB_TOKEN gets only
+  # a pull_request run held for approval), and on main after merging it (that push gets no
+  # push run).
   workflow_dispatch:
 
 concurrency:
@@ -148,5 +149,10 @@ jobs:
             echo "No open update PR at ${GITHUB_SHA}; nothing to merge."
             exit 0
           fi
+          # Opening the PR with GITHUB_TOKEN still creates a pull_request run, held for
+          # approval and marked failed. Delete it so the PR doesn't carry its red X.
+          gh run list --branch automated/update-deps --commit "${GITHUB_SHA}" \
+            --event pull_request --json databaseId --jq '.[].databaseId' |
+            while read -r run; do gh run delete "$run"; done
           gh pr merge "$pr" --squash --delete-branch
           gh workflow run ci.yml --ref main
