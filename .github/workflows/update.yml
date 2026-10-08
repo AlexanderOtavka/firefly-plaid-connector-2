@@ -51,7 +51,8 @@ jobs:
             here: upstream bumped those with Dependabot, and in this fork they are left to a
             person.
 
-      # A PR opened with GITHUB_TOKEN triggers no pull_request run, so start CI by hand.
+      # A PR opened with GITHUB_TOKEN only gets a pull_request run held for approval, so
+      # start CI by hand.
       - name: Run CI on the branch
         if: steps.pr.outputs.pull-request-operation == 'created' || steps.pr.outputs.pull-request-operation == 'updated'
         env:
