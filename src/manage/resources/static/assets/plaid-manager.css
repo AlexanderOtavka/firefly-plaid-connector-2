@@ -342,6 +342,7 @@ fieldset.form-group { border: 0; padding: 0; }
 }
 .form-control:focus { outline: none; border-color: var(--focus); box-shadow: 0 0 0 1px var(--focus); }
 select.form-control { min-width: 12rem; }
+.new-account-name { margin-top: 6px; }
 .checkbox { display: flex; align-items: flex-start; gap: 8px; font-size: 14px; cursor: pointer; }
 .checkbox input { flex: none; width: 18px; height: 18px; margin: 1px 0 0; accent-color: var(--primary); }
 fieldset .checkbox + .checkbox { margin-top: 4px; }

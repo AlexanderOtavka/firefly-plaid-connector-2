@@ -73,9 +73,12 @@ class ApiController(
     }
 
     @PostMapping("/items/{id}/mapping")
-    fun saveMapping(@PathVariable id: Long, @RequestBody request: MappingRequest): OkResponse {
-        itemService.saveMapping(id, request.accounts.map { MappingChange(it.accountId, it.fireflyAccountId, it.enabled) })
-        return OkResponse()
+    fun saveMapping(@PathVariable id: Long, @RequestBody request: MappingRequest): OkResponse = runBlocking {
+        itemService.saveMapping(
+            id,
+            request.accounts.map { MappingChange(it.accountId, it.fireflyAccountId, it.enabled, it.newFireflyAccountName) },
+        )
+        OkResponse()
     }
 
     @PostMapping("/items/{id}/retire")

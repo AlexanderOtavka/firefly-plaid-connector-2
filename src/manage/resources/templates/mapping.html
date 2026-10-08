@@ -19,6 +19,11 @@
         Plaid is still pulling this Item's history. Polling starts, and backfills become
         available, once it has finished.
     </div>
+    <p th:if="${fresh}">
+        Each account defaults to a new Firefly asset account named after it (credit cards get
+        the credit card role, savings accounts the savings role), created when you save. Pick
+        an existing account instead, or untick <em>Enabled</em> to skip it.
+    </p>
     <form id="mapping" class="box box-primary" th:data-item-id="${item.id}">
         <div class="box-body">
             <div class="table-responsive">
@@ -31,12 +36,19 @@
                         <td>
                             <select name="fireflyAccountId" class="form-control">
                                 <option value="">— not mapped —</option>
+                                <option value="new" th:selected="${row.newAccountName != null}">+ Create a new asset account</option>
                                 <option th:each="ff : ${fireflyAccounts}" th:value="${ff.id}" th:text="${ff.name}"
                                         th:selected="${ff.id == row.suggestedFireflyAccountId}">Credit card</option>
                             </select>
+                            <input type="text" name="newFireflyAccountName" class="form-control new-account-name"
+                                   maxlength="255" aria-label="Name of the new Firefly asset account"
+                                   th:value="${row.newAccountName ?: row.account.name}"
+                                   th:hidden="${row.newAccountName == null}">
                         </td>
                         <td><input type="checkbox" name="enabled"
-                                   th:checked="${row.account.enabled or (row.suggestedFireflyAccountId != null and predecessor != null)}"></td>
+                                   th:checked="${row.account.enabled
+                                       or (fresh and (row.newAccountName != null or row.suggestedFireflyAccountId != null))
+                                       or (row.suggestedFireflyAccountId != null and predecessor != null)}"></td>
                     </tr>
                     </tbody>
                 </table>

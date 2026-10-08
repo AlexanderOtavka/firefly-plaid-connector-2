@@ -22,6 +22,8 @@ import net.djvk.fireflyPlaidConnector2.manage.db.ItemStatus
 import net.djvk.fireflyPlaidConnector2.manage.db.NewPlaidAccount
 import net.djvk.fireflyPlaidConnector2.manage.firefly.FireflyAccount
 import net.djvk.fireflyPlaidConnector2.manage.firefly.FireflyDirectory
+import net.djvk.fireflyPlaidConnector2.manage.firefly.NewAssetAccount
+import net.djvk.fireflyPlaidConnector2.api.firefly.models.AccountRoleProperty
 import net.djvk.fireflyPlaidConnector2.manage.k8s.ClusterGateway
 import net.djvk.fireflyPlaidConnector2.manage.k8s.JobResult
 import net.djvk.fireflyPlaidConnector2.manage.plaid.ExchangedItem
@@ -36,6 +38,7 @@ import org.junit.jupiter.api.extension.ExtendWith
 import org.mockito.kotlin.any
 import org.mockito.kotlin.anyOrNull
 import org.mockito.kotlin.eq
+import org.mockito.kotlin.never
 import org.mockito.kotlin.verify
 import org.mockito.kotlin.whenever
 import org.springframework.beans.factory.annotation.Autowired
@@ -215,6 +218,46 @@ class ManageWebTest {
         assertThat(item.status).isEqualTo(ItemStatus.pending_history)
         assertThat(item.daysRequested).isEqualTo(730)
         assertThat(accounts.forItem(item.id).single().enabled).isFalse()
+    }
+
+    @Test
+    fun `a new link defaults to creating a Firefly account, which saving creates and maps`() {
+        perform(
+            post("/api/exchange").with(owner).with(csrf())
+                .contentType(MediaType.APPLICATION_JSON).content("""{"publicToken":"public-x","mode":"new"}""")
+        )
+        val item = items.findByPlaidItemId("item-card-new1")!!
+        val account = accounts.forItem(item.id).single().id
+
+        val page = perform(get("/items/${item.id}/mapping").with(owner)).response.contentAsString
+        assertThat(page).contains("<option value=\"new\" selected=\"selected\">")
+        assertThat(page).containsPattern("name=\"newFireflyAccountName\"[^>]*value=\"Example Card\"")
+        assertThat(page).containsPattern("<input type=\"checkbox\" name=\"enabled\"\\s+checked=\"checked\">")
+
+        // Already a Firefly account of that name: refused before anything is created.
+        val taken = perform(
+            post("/api/items/${item.id}/mapping").with(owner).with(csrf()).contentType(MediaType.APPLICATION_JSON)
+                .content("""{"accounts":[{"accountId":$account,"newFireflyAccountName":"example credit card","enabled":true}]}""")
+        )
+        assertThat(taken.response.status).isEqualTo(409)
+        runBlocking { verify(firefly, never()).createAssetAccount(any()) }
+
+        runBlocking {
+            whenever(firefly.createAssetAccount(any())).thenReturn(FireflyAccount(20, "Example Card", "ccAsset", true))
+        }
+        val saved = perform(
+            post("/api/items/${item.id}/mapping").with(owner).with(csrf()).contentType(MediaType.APPLICATION_JSON)
+                .content("""{"accounts":[{"accountId":$account,"newFireflyAccountName":" Example Card ","enabled":true}]}""")
+        )
+        assertThat(saved.response.status).isEqualTo(200)
+        runBlocking {
+            verify(firefly).createAssetAccount(
+                eq(NewAssetAccount("Example Card", AccountRoleProperty.ccAsset, "Created by the Plaid manager for Example Bank account Example Card …1234."))
+            )
+        }
+        val mapped = accounts.forItem(item.id).single()
+        assertThat(mapped.fireflyAccountId).isEqualTo(20)
+        assertThat(mapped.enabled).isTrue()
     }
 
     @Test

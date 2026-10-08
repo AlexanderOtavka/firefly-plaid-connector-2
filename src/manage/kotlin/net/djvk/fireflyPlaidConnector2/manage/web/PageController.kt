@@ -63,12 +63,17 @@ class PageController(
     fun mapping(@PathVariable id: Long, model: Model): String {
         val item = itemService.requireItem(id)
         val own = accounts.forItem(id)
-        val suggested = itemService.suggestedMapping(id)
+        val fireflyAccounts = runBlocking { firefly.assetAccounts() }
+        val proposed = itemService.proposedMapping(id, fireflyAccounts)
         val predecessor = items.predecessorOf(id)
         model.addAttribute("item", ItemView.of(item, own))
         model.addAttribute("predecessor", predecessor?.let { ItemView.of(it, accounts.forItem(it.id)) })
-        model.addAttribute("rows", own.map { MappingRowView(AccountView.of(it), suggested[it.id]) })
-        model.addAttribute("fireflyAccounts", runBlocking { firefly.assetAccounts() }.filter { it.active })
+        model.addAttribute("rows", own.map {
+            MappingRowView(AccountView.of(it), proposed[it.id]?.fireflyAccountId, proposed[it.id]?.newAccountName)
+        })
+        model.addAttribute("fireflyAccounts", fireflyAccounts.filter { it.active })
+        // A new link: nothing mapped yet, so every proposal is turned on by default.
+        model.addAttribute("fresh", own.none { it.fireflyAccountId != null })
         return "mapping"
     }
 
