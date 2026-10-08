@@ -3,6 +3,23 @@ Connector to pull Plaid financial data into the Firefly finance tool.
 
 Inspired by [firefly-plaid-connector](https://gitlab.com/GeorgeHahn/firefly-plaid-connector/).
 
+## About this fork
+This is an independently maintained fork of
+[dvankley/firefly-plaid-connector-2](https://github.com/dvankley/firefly-plaid-connector-2) v1.5.1
+(see `UPSTREAM.md`). It adds:
+
+- **A management dashboard ("Bank links")**: a `manage` mode that serves a web UI, behind Firefly III
+  login, for linking, relinking, repairing, and backfilling Plaid Items, and mapping their accounts.
+- **A database item store**: Items, account mappings, and sync cursors can live in PostgreSQL
+  (`itemStore: database`) instead of the config file, so links change without a redeploy.
+- **Backfill matching**: batch runs match transactions already imported, update them in place, and
+  flag unclear pairings for review instead of duplicating them.
+- **Hardening**: file-backed credentials, no access tokens in logs or cursor files, retries with
+  backoff, atomic cursor writes, and cursors that only advance once Firefly III has the data.
+
+It is built with Nix (`nix build`, `nix flake check`) and published as
+`ghcr.io/alexanderotavka/firefly-plaid-connector-2`. See `LOCAL_CHANGES.md` for the full list.
+
 # Concepts
 ## Mode
 The connector can be run in either `batch` or `polled` mode.
@@ -242,7 +259,7 @@ These are basic instructions for installing and running the connector. You will 
 
 ## Running the JAR Directly
 1. Ensure you have a JRE or JDK for at least Java 17.
-2. Build the JAR from this vendored source tree.
+2. Build the JAR from this repository (`nix build`, or `./gradlew bootJar`).
 3. Move the JAR to your desired working directory.
 4. Make a `persistence/` subdirectory in your working directory for the connector to persist data to that's writeable
    by the user running the connector.
@@ -254,7 +271,8 @@ These are basic instructions for installing and running the connector. You will 
 Images are published from this repository's `main` branch.
 The latest version is available at `ghcr.io/alexanderotavka/firefly-plaid-connector-2:latest`.
 
-You can also build your own with `./gradlew bootBuildImage --imageName=your-docker-registry/firefly-plaid-connector-2`.
+You can also build your own with `nix build .#container` (then `docker load < result`), or with
+`./gradlew bootBuildImage --imageName=your-docker-registry/firefly-plaid-connector-2`.
 
 ### Docker Compose
 1. Pull down the [docker-compose-polled.yml](https://raw.githubusercontent.com/dvankley/firefly-plaid-connector-2/main/docker-compose-polled.yml) and/or

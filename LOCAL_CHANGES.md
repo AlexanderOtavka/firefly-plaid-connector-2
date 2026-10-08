@@ -1,8 +1,8 @@
 # Local changes
 
-This vendored copy is derived from
+This fork is derived from
 [`dvankley/firefly-plaid-connector-2`](https://github.com/dvankley/firefly-plaid-connector-2)
-v1.5.1 and contains local modifications.
+v1.5.1 and contains local modifications. See `UPSTREAM.md` for how it tracks upstream.
 
 ## 2026-08-17
 
