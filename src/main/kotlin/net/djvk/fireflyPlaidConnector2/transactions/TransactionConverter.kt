@@ -6,6 +6,7 @@ import net.djvk.fireflyPlaidConnector2.api.firefly.models.TransactionRead
 import net.djvk.fireflyPlaidConnector2.api.firefly.models.TransactionSplit
 import net.djvk.fireflyPlaidConnector2.api.firefly.models.TransactionTypeProperty
 import net.djvk.fireflyPlaidConnector2.api.plaid.PlaidTransactionId
+import net.djvk.fireflyPlaidConnector2.config.properties.FireflyCategoryConfig
 import net.djvk.fireflyPlaidConnector2.config.properties.TransactionStyleConfig
 import net.djvk.fireflyPlaidConnector2.constants.Direction
 import net.djvk.fireflyPlaidConnector2.transactions.PersonalFinanceCategoryEnum.Primary.*
@@ -51,6 +52,7 @@ class TransactionConverter(
     private val detailedCategoryPrefix: String,
 
     private val txStyle: TransactionStyleConfig,
+    private val fireflyCategories: FireflyCategoryConfig = FireflyCategoryConfig(),
 ) {
     private val logger = LoggerFactory.getLogger(this::class.java)
     private val timeZone = TimeZone.getTimeZone(timeZoneString)
@@ -61,6 +63,18 @@ class TransactionConverter(
         fun convertScreamingSnakeCaseToKebabCase(input: String): String {
             return input
                 .replace("_", "-")
+                .lowercase()
+        }
+
+        /**
+         * Reduces a string to its letters and digits so that two renderings of the same merchant
+         * compare equal. Institutions differ in casing and punctuation between the merchant name
+         * and the original description, so "JOES TAPROOM" and "Joe's Taproom" should not be
+         * treated as two distinct pieces of information.
+         */
+        fun normalizeForRedundancyCheck(input: String): String {
+            return input
+                .filter { it.isLetterOrDigit() }
                 .lowercase()
         }
 
@@ -119,8 +133,14 @@ class TransactionConverter(
         val merchantName = tx.merchantName ?: tx.name
 
         // The originalDescription should always be populated because we're calling Plaid
-        // with include_original_description set to true
-        val defaultDesc = merchantName + if (tx.originalDescription == null) "" else ": ${tx.originalDescription}"
+        // with include_original_description set to true. Plenty of institutions report the same
+        // string for both fields though, and appending it then produces "Merchant: Merchant", so
+        // only append an original description that actually says something new.
+        val originalDescription = tx.originalDescription?.takeIf {
+            it.isNotBlank() &&
+                normalizeForRedundancyCheck(it) != normalizeForRedundancyCheck(merchantName)
+        }
+        val defaultDesc = merchantName + if (originalDescription == null) "" else ": $originalDescription"
 
         if (txStyle.descriptionExpression == null || txStyle.descriptionExpression.trim().isEmpty()) {
             return defaultDesc
@@ -240,18 +260,76 @@ class TransactionConverter(
         val creates = mutableListOf<FireflyTransactionDto>()
         val updates = mutableListOf<FireflyTransactionDto>()
         val deletes = mutableListOf<FireflyTransactionId>()
+        val indexer = FireflyTransactionExternalIdIndexer(existingFireflyTxs)
+        val settledPendingTransactionIds = mutableSetOf<PlaidTransactionId>()
+        val postedTransactionIds = mutableSetOf<PlaidTransactionId>()
+
+        /**
+         * Plaid represents a pending transaction becoming posted as one added
+         * transaction plus one removed pending transaction. Update the
+         * existing Firefly transaction in place so Firefly metadata and
+         * attachments remain associated with the same journal.
+         */
+        for (plaidCreate in plaidCreatedTxs) {
+            if (plaidCreate.pending) continue
+            val pendingTransactionId = plaidCreate.pendingTransactionId ?: continue
+            val target = indexer.findExistingFireflyTx(pendingTransactionId) ?: continue
+            val existingSplit = target.attributes.transactions.singleOrNull()
+            if (existingSplit == null) {
+                logger.warn(
+                    "Cannot settle pending Plaid transaction {} because Firefly transaction {} has multiple splits",
+                    pendingTransactionId,
+                    target.id,
+                )
+                continue
+            }
+            if (existingSplit.type == TransactionTypeProperty.transfer) {
+                logger.warn(
+                    "Cannot update pending Plaid transaction {} in place because Firefly transaction {} is a transfer",
+                    pendingTransactionId,
+                    target.id,
+                )
+                continue
+            }
+
+            val convertedPosted = convertSingle(plaidCreate, accountMap)
+            updates.add(
+                FireflyTransactionDto(
+                    target.id,
+                    preserveUserMetadata(convertedPosted.tx, existingSplit),
+                    applyRules = false,
+                ),
+            )
+            postedTransactionIds.add(plaidCreate.transactionId)
+            settledPendingTransactionIds.add(pendingTransactionId)
+        }
 
         /**
          * Don't pass in [plaidUpdatedTxs] here because we're not going to try to update transfers for now
          *  because it's more complexity than I want to deal with, and I haven't seen any Plaid updates in the wild yet
          */
-        val wrappedCreates = transferMatcher.match(
-            PlaidFireflyTransaction.normalizeByTransactionId(plaidCreatedTxs, transferCandidateExistingFireflyTxs, accountMap)
+        val remainingCreates = plaidCreatedTxs.filterNot {
+            postedTransactionIds.contains(it.transactionId)
+        }
+        val (pendingCreates, matchableCreates) = remainingCreates.partition { it.pending }
+        val wrappedPendingCreates = PlaidFireflyTransaction.normalizeByTransactionId(
+            pendingCreates,
+            transferCandidateExistingFireflyTxs,
+            accountMap,
         )
+        val wrappedMatchableCreates = transferMatcher.match(
+            PlaidFireflyTransaction.normalizeByTransactionId(
+                matchableCreates,
+                transferCandidateExistingFireflyTxs,
+                accountMap,
+            )
+        )
+        val wrappedCreates = wrappedPendingCreates + wrappedMatchableCreates
         logger.debug(
-            "{} call to transferMatcher returned {} transactions",
+            "{} prepared {} pending transactions and {} transfer-matched transactions",
             ::convertPollSync.name,
-            wrappedCreates.size,
+            wrappedPendingCreates.size,
+            wrappedMatchableCreates.size,
         )
 
         /**
@@ -305,7 +383,6 @@ class TransactionConverter(
             }
         }
 
-        val indexer = FireflyTransactionExternalIdIndexer(existingFireflyTxs)
         /**
          * Handle Plaid updates
          */
@@ -323,6 +400,9 @@ class TransactionConverter(
          * Handle Plaid deletes
          */
         for (plaidDeleteId in plaidDeletedTxs) {
+            if (settledPendingTransactionIds.contains(plaidDeleteId)) {
+                continue
+            }
             val target = indexer.findExistingFireflyTx(plaidDeleteId)
             if (target == null) {
                 logger.error("Failed to find existing Firefly transaction to delete for Plaid id $plaidDeleteId")
@@ -337,6 +417,104 @@ class TransactionConverter(
             updates = updates,
             deletes = deletes,
         )
+    }
+
+    /**
+     * Fields managed by Plaid are refreshed from [converted], while Firefly
+     * metadata that a user or rule may have added is retained from [existing].
+     */
+    private fun preserveUserMetadata(
+        converted: TransactionSplit,
+        existing: TransactionSplit,
+    ): TransactionSplit {
+        return converted.copy(
+            budgetId = existing.budgetId,
+            budgetName = existing.budgetName,
+            categoryId = existing.categoryId,
+            categoryName = existing.categoryName,
+            billId = existing.billId,
+            billName = existing.billName,
+            reconciled = existing.reconciled,
+            notes = existing.notes,
+            tags = (existing.tags.orEmpty() + converted.tags.orEmpty()).distinct(),
+            internalReference = existing.internalReference,
+        )
+    }
+
+    /**
+     * Local change: the in-place update a backfill applies to a transaction it already
+     * imported. Like [preserveUserMetadata], and in addition:
+     *
+     * - The description and payee are refreshed only while they are still text the connector
+     *   wrote ([generated], from [connectorText]); one that the owner or a Firefly rule changed
+     *   is kept. Rules are not re-run on these updates, so they would not restore it.
+     * - A category the connector set is refreshed, so a change to the category mapping reaches
+     *   earlier imports; one the owner picked, or none when categorization is off, is kept.
+     * - A reconciled transaction keeps its date, so it does not move out of the period it was
+     *   reconciled in.
+     */
+    fun refreshImported(
+        converted: TransactionSplit,
+        existing: TransactionSplit,
+        generated: Set<String>,
+    ): TransactionSplit {
+        fun wroteIt(text: String?) = text == null || normalizeForRedundancyCheck(text) in generated
+        var out = preserveUserMetadata(converted, existing)
+        if (!wroteIt(existing.description)) {
+            out = out.copy(description = existing.description)
+        }
+        when (existing.type) {
+            TransactionTypeProperty.withdrawal -> if (!wroteIt(existing.destinationName)) {
+                out = out.copy(destinationId = existing.destinationId, destinationName = existing.destinationName)
+            }
+            TransactionTypeProperty.deposit -> if (!wroteIt(existing.sourceName)) {
+                out = out.copy(sourceId = existing.sourceId, sourceName = existing.sourceName)
+            }
+            else -> Unit
+        }
+        if (existing.reconciled == true) {
+            out = out.copy(date = existing.date, processDate = existing.processDate)
+        }
+        if (converted.categoryName != null && isConnectorCategory(existing.categoryName)) {
+            out = out.copy(categoryId = null, categoryName = converted.categoryName)
+        }
+        return out
+    }
+
+    /**
+     * Every description and payee name the connector has written, or would write, for [tx],
+     * normalized with [normalizeForRedundancyCheck]: today's, and the earlier format
+     * (merchant, then the original description even when it repeats the merchant).
+     */
+    fun connectorText(tx: PlaidTransaction): Set<String> {
+        val merchant = tx.merchantName ?: tx.name
+        val texts = mutableListOf(
+            getTxDescription(tx),
+            merchant + if (tx.originalDescription == null) "" else ": ${tx.originalDescription}",
+            merchant,
+            tx.name,
+            tx.name.take(255),
+            getSourceOrDestinationName(tx, true),
+            getSourceOrDestinationName(tx, false),
+        )
+        tx.personalFinanceCategory?.let { pfc ->
+            runCatching { PersonalFinanceCategoryEnum.from(pfc) }.getOrNull()?.let {
+                texts += getUnknownSourceOrDestinationName(it, true)
+                texts += getUnknownSourceOrDestinationName(it, false)
+            }
+        }
+        texts += "Unknown"
+        return texts.map { normalizeForRedundancyCheck(it) }.toSet()
+    }
+
+    /** Matches backfills against earlier imports in this converter's time zone. */
+    fun backfillReconciler(dateWindowDays: Long) = BackfillReconciler(zoneId, dateWindowDays, ::refreshImported)
+
+    /** Whether [name] is a category the connector writes: unset, a default, or an override. */
+    fun isConnectorCategory(name: String?): Boolean {
+        if (name == null) return true
+        return name in PersonalFinanceCategoryEnum.Primary.values().map { getDefaultFireflyCategoryName(it) } ||
+            name in fireflyCategories.overrides.values
     }
 
     fun filterFireflyCandidateTransferTxs(
@@ -510,6 +688,7 @@ class TransactionConverter(
             destinationId = destinationId,
             destinationName = destinationName,
             tags = getFireflyCategoryTags(tx),
+            categoryName = fireflyTx?.tx?.categoryName ?: getFireflyCategoryName(tx),
             latitude = tx.location.lat,
             longitude = tx.location.lon,
             externalUrl = externalUrl,
@@ -545,6 +724,65 @@ class TransactionConverter(
             tagz.add(detailedCategoryPrefix + convertScreamingSnakeCaseToKebabCase(detailedCat))
         }
         return tagz
+    }
+
+    /**
+     * Translates the Plaid personal finance category into a Firefly category name.
+     *
+     * Unlike [getFireflyCategoryTags], this populates Firefly's own category field, so the result
+     * shows up in Firefly's category reports without a rule having to translate a tag first.
+     * Firefly creates a category it does not already know by name, so the returned name does not
+     * have to exist beforehand.
+     *
+     * Returns null when categorization is disabled or Plaid did not categorize the transaction,
+     * which leaves the category unset rather than clearing an existing one.
+     */
+    protected fun getFireflyCategoryName(tx: PlaidTransaction): String? {
+        if (!fireflyCategories.enable || tx.personalFinanceCategory == null) {
+            return null
+        }
+        val category = try {
+            PersonalFinanceCategoryEnum.from(tx.personalFinanceCategory)
+        } catch (e: IllegalArgumentException) {
+            logger.warn(
+                "Leaving the Firefly category unset for Plaid transaction {} with unrecognized category {}",
+                tx.transactionId,
+                tx.personalFinanceCategory,
+                e,
+            )
+            return null
+        }
+        return fireflyCategories.overrideFor(category.name)
+            ?: fireflyCategories.overrideFor(category.primary.name)
+            ?: getDefaultFireflyCategoryName(category.primary)
+    }
+
+    /**
+     * Plaid's detailed taxonomy is far finer grained than most Firefly category lists, so the
+     * default mapping is by primary category. Use `categorization.firefly.overrides` to split a
+     * primary category into finer Firefly categories.
+     */
+    fun getDefaultFireflyCategoryName(primary: PersonalFinanceCategoryEnum.Primary): String {
+        return when (primary) {
+            INCOME -> "Income"
+            LOAN_DISBURSEMENTS -> "Loan Disbursements"
+            LOAN_PAYMENTS -> "Loan Payments"
+            TRANSFER_IN -> "Transfer In"
+            TRANSFER_OUT -> "Transfer Out"
+            BANK_FEES -> "Bank Fees"
+            ENTERTAINMENT -> "Entertainment"
+            FOOD_AND_DRINK -> "Food and Drink"
+            GENERAL_MERCHANDISE -> "Shopping"
+            HOME_IMPROVEMENT -> "Home Improvement"
+            MEDICAL -> "Medical"
+            PERSONAL_CARE -> "Personal Care"
+            GENERAL_SERVICES -> "Services"
+            GOVERNMENT_AND_NON_PROFIT -> "Government and Non-Profit"
+            TRANSPORTATION -> "Transportation"
+            TRAVEL -> "Travel"
+            RENT_AND_UTILITIES -> "Rent and Utilities"
+            OTHER -> "Other"
+        }
     }
 
     /**

@@ -5,5 +5,6 @@ import org.springframework.boot.context.properties.ConfigurationProperties
 
 @ConfigurationProperties(prefix = "firefly-plaid-connector2")
 data class AccountConfigs(
-    val accounts: List<AccountConfig>
+    // Local change: empty by default, because the database item store does not use it.
+    val accounts: List<AccountConfig> = emptyList(),
 )

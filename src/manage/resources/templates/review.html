@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="en">
+<head th:replace="~{fragments :: head('Backfill review')}"></head>
+<body th:data-base="@{/}">
+<header th:replace="~{fragments :: page-header}"></header>
+<main class="content">
+    <h1 class="page-title">
+        Backfill #<span th:text="${run.id}">7</span> review
+        <small th:text="${itemName}">Example Bank …wxyz</small>
+    </h1>
+    <div class="callout callout-info">
+        The backfill wrote nothing for these. A bank transaction it could not pair with one
+        import: merge it into the transaction it duplicates (updated in place: your category,
+        budget, notes, tags, and any description or payee you or a rule changed are kept),
+        import it as new, or dismiss it to leave Firefly as it is. An import nothing matched,
+        beside one that did: it is probably a duplicate; delete it, or dismiss to keep it.
+    </div>
+    <div th:if="${run.dryRun}" class="callout callout-warning">
+        This was a dry run, so nothing can be resolved here. Run the backfill for real to act on these.
+    </div>
+    <div class="alert alert-danger" id="message" role="alert" hidden></div>
+    <div class="box" th:if="${#lists.isEmpty(reviews)}"><div class="box-body"><p>Nothing to review.</p></div></div>
+    <article th:each="review : ${reviews}" class="box review" th:classappend="|review-${review.status}|">
+        <div class="box-header">
+            <h3 class="box-title">
+                <time th:text="${review.date}">2026-09-01</time>
+                <span class="amount" th:text="${review.amount}">5.00</span>
+                <span th:text="${review.description}">Corner Cafe</span>
+            </h3>
+            <span class="labels">
+                <span class="label" th:classappend="${review.isLeftover ? 'label-warning' : 'label-info'}"
+                      th:text="${review.isLeftover ? 'possible duplicate' : 'from the bank'}">from the bank</span>
+                <span class="label" th:classappend="|label-${review.status}|" th:text="${review.status}">open</span>
+            </span>
+        </div>
+        <div class="box-body">
+            <p class="help-text">
+                <span th:text="${review.reason}">Several imported transactions could be this one</span>.
+                <span th:if="${review.type != null}"
+                      th:text="|${review.type}${review.counterparty != null ? ', ' + review.counterparty : ''}|">withdrawal</span>
+            </p>
+            <p th:if="${review.isLeftover and !#maps.isEmpty(review.related)}" class="help-text">
+                May duplicate:
+                <a th:each="entry : ${review.related}" th:href="${entry.value}" th:text="|#${entry.key} |"
+                   target="_blank" rel="noopener">#102</a>
+            </p>
+            <div class="table-responsive">
+                <table class="table accounts">
+                    <thead><tr><th>Firefly transaction</th><th>Date</th><th>Description</th><th>Category</th><th></th></tr></thead>
+                    <tbody>
+                    <tr th:each="candidate : ${review.candidates}">
+                        <td><a th:href="${candidate.url}" th:text="|#${candidate.fireflyId}|" target="_blank" rel="noopener">#101</a></td>
+                        <td class="nowrap" th:text="${candidate.date}">2026-09-02</td>
+                        <td th:text="${candidate.description ?: (review.isOpen ? 'no longer exists' : '')}">Corner Cafe</td>
+                        <td th:text="${candidate.categoryName}">Food and Drink</td>
+                        <td class="nowrap">
+                            <th:block th:if="${review.isOpen and !run.dryRun and candidate.description != null and !candidate.changed}">
+                                <button type="button" class="btn btn-default btn-sm" th:unless="${review.isLeftover}"
+                                        data-action="review-merge" th:data-review-id="${review.id}"
+                                        th:data-firefly-id="${candidate.fireflyId}">Same as this</button>
+                                <button type="button" th:if="${review.isLeftover}" class="btn btn-danger btn-sm"
+                                        data-action="review-delete" th:data-review-id="${review.id}">Delete it</button>
+                            </th:block>
+                            <span class="text-muted" th:if="${review.isOpen and candidate.changed}">matched elsewhere since</span>
+                            <span class="label label-merged" th:if="${review.mergedInto == candidate.fireflyId}">merged</span>
+                        </td>
+                    </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        <div class="box-footer actions" th:if="${review.isOpen and !run.dryRun}">
+            <button type="button" class="btn btn-primary" th:unless="${review.isLeftover}"
+                    data-action="review-import" th:data-review-id="${review.id}">Import as new</button>
+            <button type="button" class="btn btn-default" data-action="review-dismiss" th:data-review-id="${review.id}"
+                    th:text="${review.isLeftover ? 'Keep it' : 'Dismiss'}">Dismiss</button>
+        </div>
+    </article>
+</main>
+<script th:src="@{/assets/plaid-manager.js}"></script>
+</body>
+</html>

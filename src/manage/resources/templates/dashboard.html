@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="en">
+<head th:replace="~{fragments :: head('Dashboard')}"></head>
+<body th:data-base="@{/}">
+<header th:replace="~{fragments :: page-header}"></header>
+<main class="content">
+    <h1 class="page-title">Bank links</h1>
+    <div class="alert alert-danger" id="message" role="alert" hidden></div>
+
+    <section class="box box-primary summary">
+        <div class="box-body">
+            <p class="status-line">
+                Polled connector:
+                <span th:if="${connectorReplicas == null}" class="label label-danger">unknown</span>
+                <span th:if="${connectorReplicas != null and connectorReplicas > 0}" class="label label-success"
+                      th:text="|running (${connectorReplicas} ready)|">running</span>
+                <span th:if="${connectorReplicas != null and connectorReplicas == 0}" class="label label-danger">not running</span>
+            </p>
+            <div class="toolbar">
+                <button type="button" class="btn btn-primary" data-action="link" data-mode="new">Link a new bank</button>
+                <span class="help-text">New links request <span th:text="${linkDaysRequested}">730</span> days of history.</span>
+            </div>
+            <p class="help-text">Repair keeps history depth; only Replace deepens it.</p>
+        </div>
+    </section>
+
+    <h2 class="section-title">Items</h2>
+    <div class="box" th:if="${#lists.isEmpty(items)}"><div class="box-body"><p>No Items are linked yet.</p></div></div>
+    <article th:each="item : ${items}" class="box item" th:classappend="|item-${item.status}|">
+        <div class="box-header">
+            <h3 class="box-title">
+                <span th:text="${item.institutionName} ?: 'Unknown institution'">Bank</span>
+                <small th:text="|Item …${item.itemIdLast4}|">Item …abcd</small>
+            </h3>
+            <span class="label" th:classappend="|label-${item.status}|" th:text="${item.status}">active</span>
+        </div>
+        <div class="box-body">
+            <dl class="details">
+                <dt>Linked</dt>
+                <dd><time th:datetime="${item.linkedAt}" th:text="${#temporals.format(item.linkedAt, 'yyyy-MM-dd HH:mm')}">date</time>,
+                    <span th:text="${item.daysRequested}">730</span> days of history requested</dd>
+                <dt>Last sync</dt>
+                <dd th:if="${item.lastSyncAt != null}">
+                    <time th:datetime="${item.lastSyncAt}" th:text="${#temporals.format(item.lastSyncAt, 'yyyy-MM-dd HH:mm')}">date</time>,
+                    <span th:text="${item.lastSyncAdded} ?: 0">0</span> new transactions
+                </dd>
+                <dd th:if="${item.lastSyncAt == null}">never</dd>
+                <th:block th:if="${item.lastErrorCode != null}">
+                    <dt>Last error</dt>
+                    <dd class="text-danger">
+                        <code th:text="${item.lastErrorCode}">ITEM_LOGIN_REQUIRED</code>
+                        <span th:text="${item.lastErrorMessage}">message</span>
+                        (<span th:text="${item.consecutiveFailures}">1</span> in a row)
+                    </dd>
+                </th:block>
+                <th:block th:if="${item.status == 'pending_history'}">
+                    <dt>History</dt>
+                    <dd>Waiting for Plaid to finish pulling history. Polling starts, and backfills
+                        become available, once it has.</dd>
+                </th:block>
+            </dl>
+            <div class="table-responsive">
+                <table class="table accounts">
+                    <thead><tr><th>Account</th><th>Type</th><th>Firefly account</th><th>Enabled</th></tr></thead>
+                    <tbody>
+                    <tr th:each="account : ${item.accounts}">
+                        <td th:text="|${account.name} ${account.mask != null ? '…' + account.mask : ''}|">Card …1234</td>
+                        <td th:text="|${account.type} ${account.subtype ?: ''}|">credit</td>
+                        <td th:text="${account.fireflyAccountId == null ? '—' : (fireflyAccounts[account.fireflyAccountId] ?: '#' + account.fireflyAccountId)}">Credit card</td>
+                        <td th:text="${account.enabled ? 'yes' : 'no'}">yes</td>
+                    </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        <div class="box-footer actions" th:if="${item.isLive}">
+            <a class="btn btn-default" th:href="@{/items/{id}/mapping(id=${item.id})}">Account mapping</a>
+            <button type="button" class="btn btn-default" data-action="link" data-mode="repair" th:data-item-id="${item.id}"
+                    title="Plaid update mode: fixes a login, keeps history depth">Repair</button>
+            <button type="button" class="btn btn-default" data-action="link" data-mode="replace" th:data-item-id="${item.id}"
+                    title="Link a new Item for this bank: deepens history">Replace</button>
+            <button type="button" data-action="retire" th:data-item-id="${item.id}" class="btn btn-danger">Retire</button>
+        </div>
+        <form class="box-footer backfill" th:if="${item.canBackfill}" th:data-item-id="${item.id}">
+            <h4 class="form-title">Backfill</h4>
+            <div class="form-grid">
+                <label class="form-group">
+                    <span class="control-label">Days of history</span>
+                    <input type="number" class="form-control" name="days" min="1" th:max="${item.maxBackfillDays}"
+                           th:value="${item.maxBackfillDays}" required>
+                </label>
+                <label class="form-group">
+                    <span class="control-label">Timeout (hours)</span>
+                    <input type="number" class="form-control" name="timeoutHours" min="1" th:max="${maxTimeoutHours}"
+                           th:value="${defaultTimeoutHours}" required>
+                </label>
+                <fieldset class="form-group form-wide">
+                    <legend class="control-label">Accounts</legend>
+                    <label class="checkbox" th:each="account : ${item.accounts}" th:if="${account.enabled}">
+                        <input type="checkbox" name="accountId" th:value="${account.id}" checked>
+                        <span th:text="|${account.name} ${account.mask != null ? '…' + account.mask : ''}|">Card</span>
+                    </label>
+                </fieldset>
+                <label class="checkbox form-wide">
+                    <input type="checkbox" name="dryRun">
+                    <span>Dry run: report what would be matched, updated, and inserted, and write nothing</span>
+                </label>
+            </div>
+            <div class="form-actions">
+                <button type="submit" class="btn btn-primary" th:disabled="${activeRun != null}">Start backfill</button>
+            </div>
+            <p class="help-text">At most <span th:text="${item.maxBackfillDays}">730</span> days: Plaid has
+                nothing older for this Item. Transactions already imported, including by a bank link
+                this one replaced, are updated in place rather than imported again.</p>
+        </form>
+    </article>
+
+    <section class="box box-primary">
+        <div class="box-header"><h2 class="box-title">Backfills</h2></div>
+        <div class="box-body">
+            <p th:if="${#lists.isEmpty(runs)}">No backfills yet.</p>
+            <div class="table-responsive" th:unless="${#lists.isEmpty(runs)}">
+                <table class="table runs">
+                    <thead>
+                    <tr><th>#</th><th>Item</th><th>Requested</th><th>Days</th><th>Status</th><th>Duration</th>
+                        <th>Fetched</th><th>Matched</th><th>Updated</th><th>Inserted</th><th>Review</th>
+                        <th>Duplicates</th><th>Failed</th><th>Oldest</th><th>Log</th></tr>
+                    </thead>
+                    <tbody>
+                    <tr th:each="run : ${runs}" th:classappend="|run-${run.status}|">
+                        <td th:text="${run.id}">1</td>
+                        <td class="nowrap" th:text="${itemNames[run.itemId]}">Bank …abcd</td>
+                        <td class="nowrap"><time th:datetime="${run.requestedAt}"
+                                                 th:text="${#temporals.format(run.requestedAt, 'yyyy-MM-dd HH:mm')}">date</time></td>
+                        <td th:text="${run.days}">730</td>
+                        <td>
+                            <span class="label" th:classappend="|label-${run.status}|" th:text="${run.status}">succeeded</span>
+                            <span th:if="${run.dryRun}" class="label label-default">dry run</span>
+                            <div class="text-danger run-error" th:if="${run.error != null}" th:text="${run.error}">error</div>
+                        </td>
+                        <td class="nowrap" th:text="${run.durationSeconds == null ? '' : (run.durationSeconds / 60) + ' min'}">47 min</td>
+                        <td th:text="${run.fetched}">262</td>
+                        <td th:text="${run.matched}">262</td>
+                        <td th:text="${run.updated}">40</td>
+                        <td th:text="${run.inserted}">0</td>
+                        <td class="nowrap">
+                            <a th:if="${run.needsReview != null and run.needsReview > 0}"
+                               th:href="@{/backfills/{id}/review(id=${run.id})}"
+                               th:text="${run.dryRun ? run.needsReview : run.openReviews + ' of ' + run.needsReview + ' open'}">2 of 3 open</a>
+                            <span th:if="${run.needsReview == 0}">0</span>
+                        </td>
+                        <td th:text="${run.duplicates}">0</td>
+                        <td th:text="${run.failed}">0</td>
+                        <td class="nowrap" th:text="${run.oldestDate}">2024-09-27</td>
+                        <td><a th:if="${run.jobName != null}" th:href="@{/api/backfills/{id}/log(id=${run.id})}"
+                               target="_blank" rel="noopener">log</a></td>
+                    </tr>
+                    </tbody>
+                </table>
+            </div>
+            <p class="help-text">Matched transactions were already in Firefly; Updated is how many of those
+                changed. In a dry run, Updated and Inserted are what the run would have written.
+                Review lists what could not be matched safely; nothing was written for those.</p>
+        </div>
+    </section>
+</main>
+<script src="https://cdn.plaid.com/link/v2/stable/link-initialize.js"></script>
+<script th:src="@{/assets/plaid-manager.js}"></script>
+</body>
+</html>

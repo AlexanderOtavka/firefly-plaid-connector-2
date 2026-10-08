@@ -9,7 +9,7 @@ import net.djvk.fireflyPlaidConnector2.api.firefly.apis.AccountsApi
 import net.djvk.fireflyPlaidConnector2.api.firefly.apis.FireflyTransactionId
 import net.djvk.fireflyPlaidConnector2.api.firefly.apis.TransactionsApi
 import net.djvk.fireflyPlaidConnector2.api.firefly.models.FireflyApiError
-import net.djvk.fireflyPlaidConnector2.config.properties.AccountConfigs
+import net.djvk.fireflyPlaidConnector2.config.SecretValue
 import net.djvk.fireflyPlaidConnector2.transactions.FireflyAccountId
 import net.djvk.fireflyPlaidConnector2.transactions.FireflyTransactionDto
 import net.djvk.fireflyPlaidConnector2.versionManagement.VersionComparison
@@ -24,22 +24,31 @@ const val MINIMUM_FIREFLY_VERSION = "6.1.2"
 
 @Component
 class SyncHelper(
-    private val plaidAccountsConfig: AccountConfigs,
+    private val plaidItemSource: PlaidItemSource,
 
-    @Value("\${fireflyPlaidConnector2.firefly.personalAccessToken}")
+    @Value("\${fireflyPlaidConnector2.firefly.personalAccessToken:}")
     private val fireflyAccessToken: String,
     private val fireflyAboutApi: AboutApi,
     private val fireflyTxApi: TransactionsApi,
     private val fireflyAccountsApi: AccountsApi,
+    @Value("\${fireflyPlaidConnector2.firefly.personalAccessTokenFile:}")
+    private val fireflyAccessTokenFile: String = "",
 ) {
     private val logger = LoggerFactory.getLogger(this::class.java)
+    private val resolvedFireflyAccessToken by lazy {
+        SecretValue.resolve(
+            fireflyAccessToken,
+            fireflyAccessTokenFile,
+            "fireflyPlaidConnector2.firefly.personalAccessToken",
+        )
+    }
 
     suspend fun setApiCreds() {
         // Spring components are singletons by default, so this should set these credentials for any other
         //  component that also uses these components
-        fireflyTxApi.setAccessToken(fireflyAccessToken)
-        fireflyAccountsApi.setAccessToken(fireflyAccessToken)
-        fireflyAboutApi.setAccessToken(fireflyAccessToken)
+        fireflyTxApi.setAccessToken(resolvedFireflyAccessToken)
+        fireflyAccountsApi.setAccessToken(resolvedFireflyAccessToken)
+        fireflyAboutApi.setAccessToken(resolvedFireflyAccessToken)
         validateFireflyApiVersion()
     }
 
@@ -51,29 +60,30 @@ class SyncHelper(
         }
     }
 
-    fun getAllPlaidAccessTokenAccountIdSets():
-            Pair<Map<PlaidAccountId, FireflyAccountId>, Sequence<Pair<PlaidAccessToken, List<PlaidAccountId>>>> {
-        val accountMap = plaidAccountsConfig.accounts.associate { Pair(it.plaidAccountId, it.fireflyAccountId) }
-        logger.trace("Read config mapping data for ${accountMap.size} Firefly accounts")
-        val accountsByAccessToken = plaidAccountsConfig.accounts.groupBy { it.plaidItemAccessToken }
-        logger.trace("Read config mapping data for ${accountsByAccessToken.size} Plaid access tokens")
+    /** Local change: Items come from a [PlaidItemSource] rather than straight from config. */
+    fun getAccountMapAndPlaidItems(): Pair<Map<PlaidAccountId, FireflyAccountId>, Sequence<PlaidItem>> =
+        plaidItemSource.getAccountMapAndPlaidItems()
 
-        return Pair(accountMap, sequence {
-            for ((accessToken, accountConfigs) in accountsByAccessToken) {
-                val accountIds = accountConfigs.map { it.plaidAccountId }
-                yield(Pair(accessToken, accountIds))
-            }
-        })
-    }
+    suspend fun optimisticInsertBatchIntoFirefly(fireflyTxs: List<FireflyTransactionDto>): InsertCounts =
+        optimisticInsertBatchIntoFirefly(fireflyTxs, InsertCounts())
 
-    suspend fun optimisticInsertBatchIntoFirefly(fireflyTxs: List<FireflyTransactionDto>) {
+    /**
+     * Local change: accumulates into [counts] (and returns it) so a caller still has the
+     * partial counts when an insert fails and this rethrows.
+     */
+    suspend fun optimisticInsertBatchIntoFirefly(
+        fireflyTxs: List<FireflyTransactionDto>,
+        counts: InsertCounts,
+    ): InsertCounts {
         if (fireflyTxs.isNotEmpty()) {
             logger.debug("Optimistic insert of ${fireflyTxs.size} txs into Firefly")
         }
         var index = 0
         for (fireflyTx in fireflyTxs) {
             try {
-                insertIntoFirefly(fireflyTx)
+                if (insertIntoFirefly(fireflyTx)) {
+                    counts.inserted++
+                }
                 index++
                 if (index % 100 == 0) {
                     logger.debug("Insert of tx index $index successful")
@@ -82,18 +92,27 @@ class SyncHelper(
                 if (cre.response.status == HttpStatusCode.UnprocessableEntity) {
                     val error = cre.response.body<FireflyApiError>()
                     if (error.message.lowercase().contains("duplicate of transaction")) {
+                        counts.duplicates++
                         logger.info("Skipped transaction ${fireflyTx.tx.externalId} that Firefly identified as a duplicate")
                     } else {
+                        counts.failed++
                         logger.error("Firefly transaction insert $error for tx: $fireflyTx")
                         throw cre
                     }
                 } else {
+                    counts.failed++
                     throw cre
                 }
             } catch (e: ConnectTimeoutException) {
-                logger.error("Timeout inserting firefly tx; skipping for now: $fireflyTx", e)
+                counts.failed++
+                logger.error(
+                    "Timeout inserting Firefly transaction ${fireflyTx.tx.externalId}; leaving the cursor unchanged",
+                    e,
+                )
+                throw e
             }
         }
+        return counts
     }
 
     /**
@@ -108,21 +127,23 @@ class SyncHelper(
             try {
                 insertIntoFirefly(fireflyTx)
             } catch (cre: ClientRequestException) {
-                val error = cre.response.body<FireflyApiError>()
                 if (cre.response.status == HttpStatusCode.UnprocessableEntity) {
+                    val error = cre.response.body<FireflyApiError>()
                     logger.error("Firefly transaction insert $error for tx: $fireflyTx")
-                    throw cre
                 }
+                throw cre
             }
         }
     }
 
-    suspend fun insertIntoFirefly(fireflyTx: FireflyTransactionDto) {
+    /** Returns false when the transaction was skipped rather than sent to Firefly. */
+    suspend fun insertIntoFirefly(fireflyTx: FireflyTransactionDto): Boolean {
         if (fireflyTx.tx.amount.toDouble() == 0.0) {
             logger.info("Skipped transaction ${fireflyTx.tx.externalId} with amount 0.0")
-            return
+            return false
         }
         fireflyTxApi.storeTransaction(fireflyTx.toTransactionStore())
+        return true
     }
 
     suspend fun updateBatchInFirefly(fireflyTxs: List<FireflyTransactionDto>) {

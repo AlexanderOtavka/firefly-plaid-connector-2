@@ -1,10 +1,43 @@
+# Local change: the image also carries the management dashboard (syncMode: manage), which
+#   brings a servlet stack and JDBC onto the classpath. Batch and polled modes must keep
+#   starting as plain one-shot/loop processes with no database configured, so the web
+#   server and the DataSource/Flyway/JDBC auto-configuration are off by default. The
+#   manage tree's ConnectorModeEnvironmentPostProcessor applies the same settings when
+#   SPRING_CONFIG_LOCATION replaces this file, and turns the servlet stack back on only in
+#   manage mode. Database mode builds its own DataSource (see DatabaseConfiguration).
+spring:
+  main:
+    web-application-type: none
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration
+      - org.springframework.boot.autoconfigure.jdbc.DataSourceTransactionManagerAutoConfiguration
+      - org.springframework.boot.autoconfigure.jdbc.JdbcTemplateAutoConfiguration
+      - org.springframework.boot.autoconfigure.jdbc.JdbcClientAutoConfiguration
+      - org.springframework.boot.autoconfigure.flyway.FlywayAutoConfiguration
+      - org.springframework.boot.autoconfigure.sql.init.SqlInitializationAutoConfiguration
+      - org.springframework.boot.autoconfigure.security.servlet.UserDetailsServiceAutoConfiguration
 fireflyPlaidConnector2:
-  # "batch" or "polled"
+  # "batch", "polled", "manage", or "import"
   #   - "batch" runs once, attempting to sync all data up to maxSyncDays, and then exits
   #   - "polled" runs forever, syncing all new data every "syncFrequencyMinutes", storing
   #     its current state in persistence/plaid_sync_cursors.txt. On first run, it will only pull
   #     transactions that occurred after the run started.
+  #   - "manage" (local change) serves the Plaid link management dashboard. Requires
+  #     itemStore: database.
+  #   - "import" (local change) copies the configured `accounts:` block and the cursor file
+  #     into the database item store once, then exits. Requires itemStore: database.
   syncMode: batch
+  # Local change: where Items, account mappings, and sync cursors come from.
+  #   - "config" (default): the `accounts:` block below, with cursors in cursorFileDirectoryPath.
+  #   - "database": the plaid_manager PostgreSQL database; see `database:` below.
+  itemStore: config
+  # Only used when itemStore is "database".
+#  database:
+#    url: jdbc:postgresql://firefly-postgresql:5432/plaid_manager
+#    username: plaid_manager
+#    # Configure exactly one of password or passwordFile.
+#    passwordFile: /etc/firefly-plaid/db/password
   # PlaidTransaction.merchantName will always be used, if available, as the name of a transaction's
   #   destination (or source, for some transfers) account in Firefly.
   # If this is set to true and PlaidTransaction.merchantName is null, then PlaidTransaction.name will
@@ -39,6 +72,22 @@ fireflyPlaidConnector2:
   batch:
     # The number of days in the past to pull data for.
     maxSyncDays: 5
+    # Local change, database item store only: restrict a batch run to these plaid_item ids
+    #   and plaid_account ids (comma-separated), and record its result on this backfill_run
+    #   row. The management dashboard sets these on the backfill Jobs it creates.
+#    itemIds: "1"
+#    accountIds: "1,2"
+#    runId: 7
+    # Local change: before writing, match the run's transactions against what the
+    #   connector already imported into the same Firefly accounts (any `plaid-` external id),
+    #   and update matches in place instead of inserting them again. Matching is by external
+    #   id, or else by account, direction, and amount within dateWindowDays. Defaults shown.
+#    reconcile:
+#      enable: true
+#      dateWindowDays: 4
+    # Local change: report what would be matched, updated, and inserted, and write
+    #   nothing to Firefly. Defaults to false.
+#    dryRun: false
     # NOTE: Given that the balance endpoint is now $0.10 per call, this feature isn't really worth using anymore
     # and is no longer officially supported because it costs me money every time I want to QA a change to it.
     # If set to true, we will insert an offsetting transaction at the beginning of the batch pull window so
@@ -56,19 +105,30 @@ fireflyPlaidConnector2:
 #    balanceMinLastUpdatedDatetimeSeconds: 86400
   firefly:
 #    url: https://firefly.yourdomain.com
-    # Can be created in Firefly in Options->Profile->Oauth->Personal Access Tokens
+    # Can be created in Firefly in Options->Profile->Oauth->Personal Access Tokens.
+    # Configure exactly one of personalAccessToken or personalAccessTokenFile.
 #    personalAccessToken: TOKAAAAAN
+#    personalAccessTokenFile: /run/secrets/firefly-personal-access-token
   plaid:
 #    url: https://production.plaid.com
+    # Configure exactly one value or file for each credential.
 #    clientId: HI I'M A CLIENT ID
 #    secret: SECRETZ
+#    clientIdFile: /run/secrets/plaid-client-id
+#    secretFile: /run/secrets/plaid-secret
     # The number of transactions to fetch from Plaid at a time.
     # This doesn't have a major effect as in both batch and sync mode we have to retain data sets larger
     #   than just the Plaid transaction batch in memory to try to match up transfers.
     # Larger batch sizes can reduce rate limiting issues.
     batchSize: 100
-    # The number of times to retry a failed API call.
+    # Total attempts for rate limits, transient network failures, and HTTP 5xx responses.
     maxRetries: 3
+    # Exponential-backoff base delay. Plaid's Retry-After header takes precedence when present.
+    retryBaseDelayMillis: 1000
+  # Local change: request timeout for every Plaid and Firefly III call. Firefly III recalculates
+  #   running balances on each back-dated insert, which can take minutes during a backfill.
+#  http:
+#    requestTimeoutMillis: 600000
   # Customize your Firefly transaction description string. When descriptionExpression is omitted or set to an empty
   # string, the description will be formatted as something like "merchantName: originalDescription".
   # The expressions are formed as Spring Expression Language (SpEL).
@@ -134,16 +194,40 @@ fireflyPlaidConnector2:
       # Optional, defaults to false
       enable: true
       prefix: "plaid-detailed-cat-"
+    # Controls setting Firefly's own category field from a Plaid transaction's personal finance
+    #   category, instead of only tagging the transaction and leaving the translation to a rule.
+    # The tags above and this setting are independent; enable either, both, or neither.
+    firefly:
+      # Set to true to set the Firefly category from the Plaid personal finance category
+      # Optional, defaults to false
+      enable: false
+      # Overrides the Firefly category name used for a Plaid personal finance category.
+      # Plaid's detailed taxonomy is much finer grained than most Firefly category lists, so the
+      #   default mapping is by primary category: FOOD_AND_DRINK_COFFEE becomes "Food and Drink".
+      #   Use these overrides to split a primary category into finer Firefly categories, or to
+      #   rename one to match a category list you already have.
+      # A key is either a detailed value or a primary value, and a detailed key wins. Keys are
+      #   matched ignoring case and treating "-" and "_" as equivalent, because Spring only binds
+      #   map keys verbatim when they are bracketed.
+      # Firefly creates a category it does not already know by name, so these need not exist first.
+      # Optional, defaults to no overrides
+      overrides: {}
+#      overrides:
+#        food-and-drink-groceries: "Groceries"
+#        food-and-drink-coffee: "Dining Out"
+#        transportation-gas: "Fuel"
   # An array of accounts to sync from Plaid to Firefly
   accounts:
       # The account id in Firefly to sync this data to.
       # For instance, an account you view at https://localhost/accounts/show/1 will be id 1
 #    - fireflyAccountId: 1
-      # The access token for the Plaid item that contains the account
+      # The access token for the Plaid item that contains the account.
+      # Configure exactly one of plaidItemAccessToken or plaidItemAccessTokenFile.
       # You can set up Plaid Items using Plaid Quickstart https://github.com/plaid/quickstart
       # Note that Items can contain multiple Accounts, so you may re-use this access token in
       #   other entries in this YAML array
 #      plaidItemAccessToken: access-development-insert-uuid-here
+#      plaidItemAccessTokenFile: /run/secrets/plaid-item-credit-card
       # The Plaid id for the account you want to sync.
       # You can retrieve this id from https://plaid.com/docs/api/accounts/#accountsget using an
       #   Item's access token after you've set it up.

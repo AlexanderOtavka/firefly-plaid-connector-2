@@ -10,6 +10,7 @@ import net.djvk.fireflyPlaidConnector2.api.plaid.models.*
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
 import java.time.LocalDate
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.assertContains
 import kotlin.test.assertFailsWith
 
@@ -61,10 +62,14 @@ internal class PlaidApiWrapperTest {
             .getResource("plaid/response-balance.json")!!
             .readText(Charsets.UTF_8)
 
-        fun mockPlaid(engine: MockEngine): PlaidApiWrapper {
+        fun mockPlaid(
+            engine: MockEngine,
+            maxRetries: Int = 1,
+        ): PlaidApiWrapper {
             return PlaidApiWrapper(
                 baseUrl = testBaseUrl,
-                maxRetries = 1,
+                maxRetries = maxRetries,
+                retryBaseDelayMillis = 0,
                 plaidClientId = testClientId,
                 plaidSecret = testSecret,
                 httpClientEngine = engine,
@@ -89,7 +94,6 @@ internal class PlaidApiWrapperTest {
                       "access_token" : "${testAccessToken}",
                       "start_date" : "2024-05-25",
                       "end_date" : "2024-06-24",
-                      "client_id" : null,
                       "options" : {
                         "account_ids" : [ "${testAccount1}", "${testAccount2}" ],
                         "count" : 100,
@@ -99,8 +103,7 @@ internal class PlaidApiWrapperTest {
                         "include_personal_finance_category" : true,
                         "include_logo_and_counterparty_beta" : false,
                         "days_requested" : 90
-                      },
-                      "secret" : null
+                      }
                     }
                 """.trimIndent(), request.body.toByteArray().toString(Charsets.UTF_8))
 
@@ -204,8 +207,6 @@ internal class PlaidApiWrapperTest {
                 assertEquals("""
                     {
                       "access_token" : "${testAccessToken}",
-                      "client_id" : null,
-                      "secret" : null,
                       "cursor" : "${testCursor}",
                       "count" : 100,
                       "options" : {
@@ -280,13 +281,9 @@ internal class PlaidApiWrapperTest {
                 assertEquals("""
                     {
                       "access_token" : "${testAccessToken}",
-                      "secret" : null,
-                      "client_id" : null,
                       "options" : {
-                        "account_ids" : [ "${testAccount1}", "${testAccount2}" ],
-                        "min_last_updated_datetime" : null
-                      },
-                      "payment_details" : null
+                        "account_ids" : [ "${testAccount1}", "${testAccount2}" ]
+                      }
                     }
                 """.trimIndent(), request.body.toByteArray().toString(Charsets.UTF_8))
 
@@ -330,5 +327,62 @@ internal class PlaidApiWrapperTest {
             assertEquals(2, body.accounts.size, "number of accounts")
             assertNotNull(body.item, "item")
         }
+    }
+
+    @Test
+    fun transientServerFailureIsRetried() = runBlocking {
+        val attempts = AtomicInteger()
+        val plaid = mockPlaid(
+            MockEngine {
+                if (attempts.incrementAndGet() == 1) {
+                    respond(
+                        content = ByteReadChannel("""{"error":"temporary"}"""),
+                        status = HttpStatusCode.ServiceUnavailable,
+                        headers = headersOf(HttpHeaders.ContentType, "application/json"),
+                    )
+                } else {
+                    respond(
+                        content = ByteReadChannel(getTransactionsResponseStr),
+                        status = HttpStatusCode.OK,
+                        headers = headersOf(HttpHeaders.ContentType, "application/json"),
+                    )
+                }
+            },
+            maxRetries = 2,
+        )
+
+        val response = plaid.executeRequest(
+            { plaidApi -> plaidApi.transactionsGet(getTransactionsRequest) },
+            "transaction get request",
+        )
+
+        assertEquals(HttpStatusCode.OK, response.response.status)
+        assertEquals(2, attempts.get())
+    }
+
+    @Test
+    fun rateLimitRespectsMaximumAttempts() = runBlocking {
+        val attempts = AtomicInteger()
+        val plaid = mockPlaid(
+            MockEngine {
+                attempts.incrementAndGet()
+                respond(
+                    content = ByteReadChannel("""{"error":"rate limited"}"""),
+                    status = HttpStatusCode.TooManyRequests,
+                    headers = headersOf(HttpHeaders.ContentType, "application/json"),
+                )
+            },
+            maxRetries = 2,
+        )
+
+        val exception = assertFailsWith<RuntimeException> {
+            plaid.executeRequest(
+                { plaidApi -> plaidApi.transactionsGet(getTransactionsRequest) },
+                "transaction get request",
+            )
+        }
+
+        assertContains(exception.message.orEmpty(), "failed after 2 attempts")
+        assertEquals(2, attempts.get())
     }
 }

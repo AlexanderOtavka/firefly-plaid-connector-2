@@ -1,0 +1,2 @@
+org.springframework.boot.env.EnvironmentPostProcessor=\
+net.djvk.fireflyPlaidConnector2.manage.ConnectorModeEnvironmentPostProcessor

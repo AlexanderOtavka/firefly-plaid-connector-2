@@ -23,6 +23,8 @@ class PlaidSyncService(
 
     @Value("\${fireflyPlaidConnector2.polled.allowItemToFail:false}")
     private val allowItemToFail: Boolean,
+
+    private val syncOutcomeRecorder: SyncOutcomeRecorder = NoopSyncOutcomeRecorder(),
 ) {
     private val logger = LoggerFactory.getLogger(this::class.java)
 
@@ -54,7 +56,8 @@ class PlaidSyncService(
     suspend fun executeTransactionSyncRequest(
         accessToken: PlaidAccessToken,
         cursor: PlaidSyncCursor?,
-        batchSize: Int = plaidBatchSize
+        batchSize: Int = plaidBatchSize,
+        item: PlaidItem? = null,
     ): TransactionsSyncResponse? {
         val request = getTransactionSyncRequest(accessToken, cursor, batchSize)
         try {
@@ -63,9 +66,15 @@ class PlaidSyncService(
                 "transaction sync request"
             ).body()
         } catch (cre: ClientRequestException) {
-            logger.error("Error requesting Plaid transactions. Request: $request; ")
+            val error = PlaidErrorInfo.from(cre)
+            logger.error("Error requesting Plaid transactions: ${error.code ?: "unknown error code"}")
+            // Local change: record the failure on both paths, so an ITEM_LOGIN_REQUIRED is
+            // visible whether or not the cycle is allowed to continue past it.
+            if (item != null) {
+                syncOutcomeRecorder.itemFailed(item, error)
+            }
             if (allowItemToFail) {
-                logger.warn("Querying transactions for access token $accessToken failed, allowing failure and continuing on to the next access token")
+                logger.warn("Plaid Item failed, allowing failure and continuing to the next Item")
                 return null
             } else throw cre
         }
@@ -76,39 +85,49 @@ class PlaidSyncService(
      * Returns lists of created, updated, and deleted transactions.
      */
     suspend fun processPlaidTransactions(
-        accountAccessTokenSequence: Sequence<Pair<PlaidAccessToken, List<PlaidAccountId>>>,
-        cursorMap: MutableMap<PlaidAccessToken, PlaidSyncCursor>
+        plaidItems: Sequence<PlaidItem>,
+        cursorMap: MutableMap<PlaidItemKey, PlaidSyncCursor>
     ): PlaidTransactionResult {
         val plaidCreatedTxs = mutableListOf<PlaidTransaction>()
         val plaidUpdatedTxs = mutableListOf<PlaidTransaction>()
         val plaidDeletedTxs = mutableListOf<PlaidTransactionId>()
+        val addedByItem = mutableMapOf<PlaidItemKey, Int>()
+        val failedItems = mutableSetOf<PlaidItemKey>()
 
-        accessTokenLoop@ for ((accessToken, accountIds) in accountAccessTokenSequence) {
+        itemLoop@ for (item in plaidItems) {
             logger.debug(
-                "Querying Plaid transaction sync endpoint for access token $accessToken " +
-                        " and account ids ${accountIds.joinToString("; ")}"
+                "Querying Plaid transaction sync endpoint for Item ${item.key.take(17)} " +
+                        "and ${item.accountIds.size} configured accounts"
             )
-            val accountIdSet = accountIds.toSet()
+            val accountIdSet = item.accountIds.toSet()
 
             // Plaid transaction batch loop
             do {
                 // Iterate through batches of Plaid transactions
                 // In sync mode we fetch and retain all Plaid transactions that have changed since the last poll.
-                val response = executeTransactionSyncRequest(
-                    accessToken,
-                    cursorMap[accessToken],
-                    plaidBatchSize
-                ) ?: continue@accessTokenLoop
+                val maybeResponse = executeTransactionSyncRequest(
+                    item.accessToken,
+                    cursorMap[item.key],
+                    plaidBatchSize,
+                    item,
+                )
+                if (maybeResponse == null) {
+                    failedItems.add(item.key)
+                    continue@itemLoop
+                }
+                val response: TransactionsSyncResponse = maybeResponse
 
-                cursorMap[accessToken] = response.nextCursor
+                cursorMap[item.key] = response.nextCursor
                 logger.debug(
-                    "Received batch of sync updates for access token $accessToken: " +
+                    "Received batch of sync updates for Item ${item.key.take(17)}: " +
                             "${response.added.size} created; ${response.modified.size} updated; " +
-                            "${response.removed.size} deleted; next cursor ${response.nextCursor}"
+                            "${response.removed.size} deleted"
                 )
 
                 // The transaction sync endpoint doesn't take accountId as a parameter, so do that filtering here
-                plaidCreatedTxs.addAll(response.added.filter { accountIdSet.contains(it.accountId) })
+                val added = response.added.filter { accountIdSet.contains(it.accountId) }
+                addedByItem[item.key] = (addedByItem[item.key] ?: 0) + added.size
+                plaidCreatedTxs.addAll(added)
                 plaidUpdatedTxs.addAll(response.modified.filter { accountIdSet.contains(it.accountId) })
                 plaidDeletedTxs.addAll(response.removed.mapNotNull { it.transactionId })
 
@@ -119,7 +138,9 @@ class PlaidSyncService(
         return PlaidTransactionResult(
             plaidCreatedTxs,
             plaidUpdatedTxs,
-            plaidDeletedTxs
+            plaidDeletedTxs,
+            addedByItem,
+            failedItems,
         )
     }
 
@@ -127,14 +148,14 @@ class PlaidSyncService(
      * Initializes cursors for access tokens that don't have one yet.
      */
     suspend fun initializeCursors(
-        accountAccessTokenSequence: Sequence<Pair<PlaidAccessToken, List<PlaidAccountId>>>,
-        cursorMap: MutableMap<PlaidAccessToken, PlaidSyncCursor>
+        plaidItems: Sequence<PlaidItem>,
+        cursorMap: MutableMap<PlaidItemKey, PlaidSyncCursor>
     ) {
         logger.debug("Beginning Plaid sync endpoint cursor initialization")
-        cursorCatchupLoop@ for ((accessToken, _) in accountAccessTokenSequence) {
-            // If we already have a cursor for this access token, then move on
-            if (cursorMap.contains(accessToken)) {
-                logger.debug("Cursor map contains $accessToken, skipping initialization for it")
+        cursorCatchupLoop@ for (item in plaidItems) {
+            // If we already have a cursor for this Item, then move on
+            if (cursorMap.contains(item.key)) {
+                logger.debug("Cursor map contains Item ${item.key.take(17)}, skipping initialization")
                 continue
             }
 
@@ -142,14 +163,13 @@ class PlaidSyncService(
             // to get current cursors
             do {
                 val response =
-                    executeTransactionSyncRequest(accessToken, cursorMap[accessToken], plaidBatchSize)
+                    executeTransactionSyncRequest(item.accessToken, cursorMap[item.key], plaidBatchSize, item)
                         ?: continue@cursorCatchupLoop
                 logger.debug(
-                    "Received initial batch of sync updates for access token $accessToken. " +
-                            "Updating cursor map to next cursor: ${response.nextCursor}"
+                    "Received initial sync batch for Item ${item.key.take(17)}"
                 )
                 if (response.nextCursor.isNotBlank()) {
-                    cursorMap[accessToken] = response.nextCursor
+                    cursorMap[item.key] = response.nextCursor
                 }
             } while (response.hasMore)
         }
@@ -162,5 +182,8 @@ class PlaidSyncService(
 data class PlaidTransactionResult(
     val created: List<PlaidTransaction>,
     val updated: List<PlaidTransaction>,
-    val deleted: List<PlaidTransactionId>
+    val deleted: List<PlaidTransactionId>,
+    /** Local change: per-Item counts and failures, for [SyncOutcomeRecorder]. */
+    val addedByItem: Map<PlaidItemKey, Int> = emptyMap(),
+    val failedItems: Set<PlaidItemKey> = emptySet(),
 )

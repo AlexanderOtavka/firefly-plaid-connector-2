@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="en">
+<head th:replace="~{fragments :: head('Not allowed')}"></head>
+<body>
+<header th:replace="~{fragments :: page-header-plain}"></header>
+<main class="content content-narrow">
+    <section class="box box-danger">
+        <div class="box-header"><h1 class="box-title">Not allowed</h1></div>
+        <div class="box-body">
+            <p>Only the Firefly owner can manage bank links. Log in to Firefly as the owner and try again.</p>
+        </div>
+        <div class="box-footer actions">
+            <a class="btn btn-primary" th:href="@{/}">Try again</a>
+            <a class="btn btn-default" href="/">Back to Firefly</a>
+        </div>
+    </section>
+</main>
+</body>
+</html>
