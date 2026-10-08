@@ -30,6 +30,22 @@ dependencies {
     implementation("org.springframework.boot:spring-boot-starter")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.8.1")
     implementation("org.semver4j:semver4j:5.3.0")
+
+    // Local change: the management dashboard (src/manage/). Batch and polled modes keep
+    // running without a web server or a database; see application.yml.
+    implementation("org.springframework.boot:spring-boot-starter-web")
+    implementation("org.springframework.boot:spring-boot-starter-jdbc")
+    implementation("org.springframework.boot:spring-boot-starter-thymeleaf")
+    implementation("org.springframework.boot:spring-boot-starter-security")
+    implementation("org.springframework.boot:spring-boot-starter-oauth2-client")
+    implementation("org.flywaydb:flyway-core")
+    implementation("org.flywaydb:flyway-database-postgresql")
+    implementation("io.micrometer:micrometer-registry-prometheus")
+    implementation("io.fabric8:kubernetes-client:6.13.4")
+    runtimeOnly("org.postgresql:postgresql")
+    testImplementation("org.springframework.security:spring-security-test")
+    testImplementation("io.zonky.test:embedded-postgres:2.0.7")
+
     testImplementation(libs.kotlin.test)
     testImplementation(libs.ktor.mock)
     testImplementation("org.springframework.boot:spring-boot-starter-test")
@@ -64,7 +80,19 @@ kotlin {
     sourceSets {
         main {
             kotlin.srcDir(Paths.get(generatePlaidClient.get().outputDir.get(), "src", "main", "kotlin"))
+            // Local change: the management dashboard lives in its own tree, so rebasing on
+            // upstream does not collide with it. See LOCAL_CHANGES.md.
+            kotlin.srcDir("src/manage/kotlin")
         }
+        test {
+            kotlin.srcDir("src/manageTest/kotlin")
+        }
+    }
+}
+
+sourceSets {
+    main {
+        resources.srcDir("src/manage/resources")
     }
 }
 

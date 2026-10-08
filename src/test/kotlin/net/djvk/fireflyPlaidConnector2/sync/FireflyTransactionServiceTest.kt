@@ -14,6 +14,7 @@ import org.mockito.kotlin.*
 import java.net.URI
 import java.time.LocalDate
 import java.time.OffsetDateTime
+import kotlin.test.assertFailsWith
 
 class FireflyTransactionServiceTest {
 
@@ -78,11 +79,13 @@ class FireflyTransactionServiceTest {
             whenever(syncHelper.deleteBatchInFirefly(eq(listOf("transfer-update-id")))).thenThrow(RuntimeException("Delete failed"))
 
             // Execute
-            fireflyTransactionService.processFireflyTransactionUpdates(
-                emptyList(),
-                listOf(transferUpdate),
-                emptyList()
-            )
+            assertFailsWith<RuntimeException> {
+                fireflyTransactionService.processFireflyTransactionUpdates(
+                    emptyList(),
+                    listOf(transferUpdate),
+                    emptyList()
+                )
+            }
 
             // Verify
             verify(syncHelper).deleteBatchInFirefly(eq(listOf("transfer-update-id")))

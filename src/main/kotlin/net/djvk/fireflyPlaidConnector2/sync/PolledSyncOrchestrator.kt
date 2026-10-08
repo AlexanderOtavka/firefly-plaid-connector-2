@@ -1,5 +1,6 @@
 package net.djvk.fireflyPlaidConnector2.sync
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -30,10 +31,11 @@ class PolledSyncOrchestrator(
     private val syncFrequencyMinutes: IntervalMinutes,
 
     private val syncHelper: SyncHelper,
-    private val cursorManager: CursorManager,
+    private val cursorManager: CursorStore,
     private val plaidSyncService: PlaidSyncService,
     private val fireflyTransactionService: FireflyTransactionService,
     private val converter: TransactionConverter,
+    private val syncOutcomeRecorder: SyncOutcomeRecorder = NoopSyncOutcomeRecorder(),
 ) : Runner, DisposableBean {
     private val logger = LoggerFactory.getLogger(this::class.java)
 
@@ -48,10 +50,10 @@ class PolledSyncOrchestrator(
         val cursorMap = cursorManager.readCursorMap()
 
         // Get account mappings
-        val (accountMap, accountAccessTokenSequence) = syncHelper.getAllPlaidAccessTokenAccountIdSets()
+        val (_, plaidItems) = syncHelper.getAccountMapAndPlaidItems()
 
         // Initialize cursors for access tokens that don't have one yet
-        plaidSyncService.initializeCursors(accountAccessTokenSequence, cursorMap)
+        plaidSyncService.initializeCursors(plaidItems, cursorMap)
         cursorManager.writeCursorMap(cursorMap)
     }
 
@@ -60,17 +62,15 @@ class PolledSyncOrchestrator(
      */
     suspend fun processTransactions(
         accountMap: Map<PlaidAccountId, FireflyAccountId>,
-        accountAccessTokenSequence: Sequence<Pair<PlaidAccessToken, List<PlaidAccountId>>>,
-        cursorMap: MutableMap<PlaidAccessToken, PlaidSyncCursor>
+        plaidItems: Sequence<PlaidItem>,
+        cursorMap: MutableMap<PlaidItemKey, PlaidSyncCursor>
     ) {
         // Fetch existing Firefly transactions
         val existingFireflyTxs = fireflyTransactionService.fetchExistingFireflyTransactions()
 
         // Process Plaid transactions
-        val plaidTransactions = plaidSyncService.processPlaidTransactions(
-            accountAccessTokenSequence,
-            cursorMap
-        )
+        val nextCursorMap = cursorMap.toMutableMap()
+        val plaidTransactions = plaidSyncService.processPlaidTransactions(plaidItems, nextCursorMap)
 
         // Convert Plaid transactions to Firefly format
         logger.trace("Converting Plaid transactions to Firefly transactions")
@@ -95,37 +95,76 @@ class PolledSyncOrchestrator(
         )
 
         // Update cursor map after successful processing
-        cursorManager.writeCursorMap(cursorMap)
+        cursorManager.writeCursorMap(nextCursorMap)
+        cursorMap.clear()
+        cursorMap.putAll(nextCursorMap)
+
+        // Local change: record per-Item outcomes only once the cycle has been committed.
+        for (item in plaidItems) {
+            if (item.key !in plaidTransactions.failedItems) {
+                syncOutcomeRecorder.itemSucceeded(item, plaidTransactions.addedByItem[item.key] ?: 0)
+            }
+        }
+    }
+
+    /**
+     * One polling cycle.
+     *
+     * Local change: upstream read Items and cursors once, before its loop, so an Item added
+     * while the connector was running was never polled. Both are now re-read every cycle, and
+     * cursors are initialized for any Item that has appeared since the last one. Re-reading
+     * the cursor store is equivalent to keeping it in memory, because it is only written once
+     * a cycle has fully succeeded.
+     */
+    suspend fun pollOnce() {
+        val (accountMap, plaidItemsSequence) = syncHelper.getAccountMapAndPlaidItems()
+        val plaidItems = plaidItemsSequence.toList()
+        val cursorMap = cursorManager.readCursorMap()
+
+        val missingCursors = plaidItems.any { it.key !in cursorMap }
+        if (missingCursors) {
+            plaidSyncService.initializeCursors(plaidItems.asSequence(), cursorMap)
+            cursorManager.writeCursorMap(cursorMap)
+        }
+
+        processTransactions(accountMap, plaidItems.asSequence(), cursorMap)
     }
 
     override fun run() {
         runBlocking {
-            syncHelper.setApiCreds()
-
             mainJob = launch {
-                // Initialize cursors
-                initializeCursors()
-
-                // Get account mappings for the polling loop
-                val (accountMap, accountAccessTokenSequence) = syncHelper.getAllPlaidAccessTokenAccountIdSets()
-                val cursorMap = cursorManager.readCursorMap()
-
-                /**
-                 * Periodic polling loop
-                 */
                 do {
-                    logger.debug("Polling loop start")
+                    try {
+                        syncHelper.setApiCreds()
 
-                    // Process transactions
-                    processTransactions(accountMap, accountAccessTokenSequence, cursorMap)
+                        while (!terminated.get()) {
+                            logger.debug("Polling loop start")
+                            try {
+                                pollOnce()
+                            } catch (e: CancellationException) {
+                                throw e
+                            } catch (e: Exception) {
+                                logger.error(
+                                    "Polling cycle failed; cursor state was not advanced and the cycle will be retried",
+                                    e,
+                                )
+                            }
 
-                    // Trigger GC to try to reduce heap size
-                    logger.trace("Calling System.gc()")
-                    System.gc()
+                            logger.trace("Calling System.gc()")
+                            System.gc()
 
-                    // Sleep until next poll
-                    logger.info("Sleeping $syncFrequencyMinutes")
-                    delay(syncFrequencyMinutes.minutes)
+                            logger.info("Sleeping $syncFrequencyMinutes")
+                            delay(syncFrequencyMinutes.minutes)
+                        }
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        logger.error(
+                            "Plaid polling initialization failed; retrying in $syncFrequencyMinutes minutes",
+                            e,
+                        )
+                        delay(syncFrequencyMinutes.minutes)
+                    }
                 } while (!terminated.get())
             }
         }

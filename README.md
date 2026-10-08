@@ -3,6 +3,23 @@ Connector to pull Plaid financial data into the Firefly finance tool.
 
 Inspired by [firefly-plaid-connector](https://gitlab.com/GeorgeHahn/firefly-plaid-connector/).
 
+## About this fork
+This is an independently maintained fork of
+[dvankley/firefly-plaid-connector-2](https://github.com/dvankley/firefly-plaid-connector-2) v1.5.1
+(see `UPSTREAM.md`). It adds:
+
+- **A management dashboard ("Bank links")**: a `manage` mode that serves a web UI, behind Firefly III
+  login, for linking, relinking, repairing, and backfilling Plaid Items, and mapping their accounts.
+- **A database item store**: Items, account mappings, and sync cursors can live in PostgreSQL
+  (`itemStore: database`) instead of the config file, so links change without a redeploy.
+- **Backfill matching**: batch runs match transactions already imported, update them in place, and
+  flag unclear pairings for review instead of duplicating them.
+- **Hardening**: file-backed credentials, no access tokens in logs or cursor files, retries with
+  backoff, atomic cursor writes, and cursors that only advance once Firefly III has the data.
+
+It is built with Nix (`nix build`, `nix flake check`) and published as
+`ghcr.io/alexanderotavka/firefly-plaid-connector-2`. See `LOCAL_CHANGES.md` for the full list.
+
 # Concepts
 ## Mode
 The connector can be run in either `batch` or `polled` mode.
@@ -24,7 +41,9 @@ convert it to Firefly transactions, and write them to Firefly.
 When started in this mode, the connector will not pull any past transactions, but will check for new transactions every 
 `fireflyPlaidConnector2.polled.syncFrequencyMinutes`.
 
-The last sync position of each account will be stored in `persistence/plaid_sync_cursors.txt`.
+The last sync position of each Plaid Item is stored in `persistence/plaid_sync_cursors.txt`.
+The file contains one-way Item identifiers rather than Plaid access tokens and is written with owner-only permissions
+on POSIX filesystems.
 
 ## Firefly Transfers
 The most complex part of the connector by far is the transfer matching logic.
@@ -112,8 +131,12 @@ Once you've completed all the requirements for Oauth access, the applicable inst
 (see below).
 
 ### Basic Credentials
-Once you've signed up for Plaid, you should be provided a client id and secret, which go in the application config
-file where you'd expect (`fireflyPlaidConnector2.plaid.clientId` and `fireflyPlaidConnector2.plaid.secret`).
+Once you've signed up for Plaid, you should be provided a client ID and secret. For local testing they can be configured
+inline as `fireflyPlaidConnector2.plaid.clientId` and `fireflyPlaidConnector2.plaid.secret`. For unattended deployments,
+use `clientIdFile` and `secretFile` instead so the values can be mounted from a container or NixOS secret.
+
+The same pattern applies to `firefly.personalAccessTokenFile` and each account's `plaidItemAccessTokenFile`. Exactly one
+inline value or file must be configured for each credential. Secret files should be readable only by the connector user.
 
 ### Connecting Accounts
 Next up, you need to connect Plaid to your various financial institutions. The easiest way to do this is to run
@@ -236,7 +259,7 @@ These are basic instructions for installing and running the connector. You will 
 
 ## Running the JAR Directly
 1. Ensure you have a JRE or JDK for at least Java 17.
-2. Download the latest JAR from the [releases page](https://github.com/dvankley/firefly-plaid-connector-2/releases).
+2. Build the JAR from this repository (`nix build`, or `./gradlew bootJar`).
 3. Move the JAR to your desired working directory.
 4. Make a `persistence/` subdirectory in your working directory for the connector to persist data to that's writeable
    by the user running the connector.
@@ -245,10 +268,11 @@ These are basic instructions for installing and running the connector. You will 
 6. Run the connector, for instance with `java -jar connector.jar --spring.config.location=application.yml`
 
 ## Running via Docker
-New versions of the Docker image are pushed to GHCR with each release.
-The latest version is available at `ghcr.io/dvankley/firefly-plaid-connector-2:latest`.
+Images are published from this repository's `main` branch.
+The latest version is available at `ghcr.io/alexanderotavka/firefly-plaid-connector-2:latest`.
 
-You can also build your own with `./gradlew bootBuildImage --imageName=your-docker-registry/firefly-plaid-connector-2`.
+You can also build your own with `nix build .#container` (then `docker load < result`), or with
+`./gradlew bootBuildImage --imageName=your-docker-registry/firefly-plaid-connector-2`.
 
 ### Docker Compose
 1. Pull down the [docker-compose-polled.yml](https://raw.githubusercontent.com/dvankley/firefly-plaid-connector-2/main/docker-compose-polled.yml) and/or
@@ -294,7 +318,8 @@ docker run \
 
 # Credential Updates
    On occasion, you will get an `ITEM_LOGIN_REQUIRED` error in the connector logs. This typically happens when the credentials
-   for one of the institutional accounts you've linked Plaid to have changed. You can find the access token for the account in question on the log line above the exception log.
+   for one of the institutional accounts you've linked Plaid to have changed. The connector deliberately does not log access
+   tokens; identify the affected Item in the Plaid dashboard and use the token from your secret store.
    There are two methods for resolving the error, described below.
 ## Update Mode
 This is the recommended method of resolving this issue, although it's a bit more complex than create mode.

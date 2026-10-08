@@ -111,9 +111,10 @@ class FireflyTransactionService(
             } catch (e: Exception) {
                 logger.error(
                     "Failed to execute delete as first part of updating transaction ${update.id}; " +
-                            "aborting create part of update operation", e
+                            "aborting create part of update operation",
+                    e,
                 )
-                continue
+                throw e
             }
 
             /**

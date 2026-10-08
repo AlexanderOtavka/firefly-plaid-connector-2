@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="en">
+<head th:replace="~{fragments :: head('Finishing the bank link')}"></head>
+<body th:data-base="@{/}" data-page="oauth-return">
+<header th:replace="~{fragments :: page-header}"></header>
+<main class="content content-narrow">
+    <section class="box box-primary">
+        <div class="box-header"><h1 class="box-title">Finishing the bank link…</h1></div>
+        <div class="box-body">
+            <div class="alert alert-danger" id="message" role="alert" hidden></div>
+        </div>
+        <div class="box-footer actions">
+            <a class="btn btn-default" th:href="@{/}">Back to the dashboard</a>
+        </div>
+    </section>
+</main>
+<script src="https://cdn.plaid.com/link/v2/stable/link-initialize.js"></script>
+<script th:src="@{/assets/plaid-manager.js}"></script>
+</body>
+</html>

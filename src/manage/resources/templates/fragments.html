@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head th:fragment="head(title)">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light dark">
+    <meta name="referrer" content="same-origin">
+    <meta th:if="${_csrf != null}" name="csrf-header" th:content="${_csrf.headerName}">
+    <meta th:if="${_csrf != null}" name="csrf-token" th:content="${_csrf.token}">
+    <title th:text="${title} + ' · Bank links'">Bank links</title>
+    <link rel="stylesheet" th:href="@{/assets/plaid-manager.css}">
+</head>
+<body>
+<header th:fragment="page-header" class="main-header">
+    <a class="logo" th:href="@{/}">Bank links</a>
+    <nav class="navbar">
+        <a class="nav-link" href="/">Back to Firefly</a>
+        <form th:action="@{/logout}" method="post" class="logout">
+            <input type="hidden" th:if="${_csrf != null}" th:name="${_csrf.parameterName}" th:value="${_csrf.token}">
+            <button type="submit" class="nav-link">Log out</button>
+        </form>
+    </nav>
+</header>
+<!-- For pages shown without a session: no logout form. -->
+<header th:fragment="page-header-plain" class="main-header">
+    <a class="logo" th:href="@{/}">Bank links</a>
+    <nav class="navbar">
+        <a class="nav-link" href="/">Back to Firefly</a>
+    </nav>
+</header>
+</body>
+</html>

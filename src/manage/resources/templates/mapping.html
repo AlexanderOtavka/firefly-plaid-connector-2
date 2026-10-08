@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="en">
+<head th:replace="~{fragments :: head('Account mapping')}"></head>
+<body th:data-base="@{/}">
+<header th:replace="~{fragments :: page-header}"></header>
+<main class="content">
+    <h1 class="page-title">
+        Account mapping:
+        <span th:text="${item.institutionName} ?: 'Unknown institution'">Bank</span>
+        <small th:text="|Item …${item.itemIdLast4}|">Item …abcd</small>
+    </h1>
+    <div th:if="${predecessor != null}" class="callout callout-info">
+        This Item replaces <strong th:text="|Item …${predecessor.itemIdLast4}|">Item …wxyz</strong>.
+        Suggestions below come from its mapping, matched by Plaid's persistent account ID, then
+        by mask and subtype. Saving turns off all of the old Item's accounts; retire it
+        afterwards so Plaid stops billing for it.
+    </div>
+    <div th:if="${item.status == 'pending_history'}" class="callout callout-warning">
+        Plaid is still pulling this Item's history. Polling starts, and backfills become
+        available, once it has finished.
+    </div>
+    <form id="mapping" class="box box-primary" th:data-item-id="${item.id}">
+        <div class="box-body">
+            <div class="table-responsive">
+                <table class="table accounts">
+                    <thead><tr><th>Plaid account</th><th>Type</th><th>Firefly asset account</th><th>Enabled</th></tr></thead>
+                    <tbody>
+                    <tr th:each="row : ${rows}" th:data-account-id="${row.account.id}">
+                        <td th:text="|${row.account.name} ${row.account.mask != null ? '…' + row.account.mask : ''}|">Card …1234</td>
+                        <td th:text="|${row.account.type} ${row.account.subtype ?: ''}|">credit card</td>
+                        <td>
+                            <select name="fireflyAccountId" class="form-control">
+                                <option value="">— not mapped —</option>
+                                <option th:each="ff : ${fireflyAccounts}" th:value="${ff.id}" th:text="${ff.name}"
+                                        th:selected="${ff.id == row.suggestedFireflyAccountId}">Credit card</option>
+                            </select>
+                        </td>
+                        <td><input type="checkbox" name="enabled"
+                                   th:checked="${row.account.enabled or (row.suggestedFireflyAccountId != null and predecessor != null)}"></td>
+                    </tr>
+                    </tbody>
+                </table>
+            </div>
+            <div class="alert alert-danger" id="message" role="alert" hidden></div>
+        </div>
+        <div class="box-footer actions">
+            <button type="submit" class="btn btn-primary">Save mapping</button>
+            <a class="btn btn-default" th:href="@{/}">Cancel</a>
+        </div>
+    </form>
+</main>
+<script th:src="@{/assets/plaid-manager.js}"></script>
+</body>
+</html>

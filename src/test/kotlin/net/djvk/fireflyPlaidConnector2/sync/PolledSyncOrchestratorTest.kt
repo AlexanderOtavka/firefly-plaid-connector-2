@@ -13,11 +13,15 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.Arguments
 import org.junit.jupiter.params.provider.MethodSource
+import org.mockito.kotlin.any
 import org.mockito.kotlin.eq
 import org.mockito.kotlin.mock
+import org.mockito.kotlin.never
 import org.mockito.kotlin.verify
 import org.mockito.kotlin.whenever
 import java.util.stream.Stream
+import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 
 /**
  * Test for the PolledSyncOrchestrator class.
@@ -42,12 +46,12 @@ internal class PolledSyncOrchestratorTest {
     @Test
     fun testInitializeCursors() = runBlocking {
         // Setup
-        val cursorMap = mutableMapOf<String, String>() // PlaidAccessToken to PlaidSyncCursor
+        val cursorMap = mutableMapOf<String, String>() // PlaidItemKey to PlaidSyncCursor
         val accountMap = mapOf<String, Int>("account1" to 1) // PlaidAccountId to FireflyAccountId
-        val accountAccessTokenSequence = sequenceOf(Pair("token1", listOf("account1")))
+        val plaidItems = sequenceOf(PlaidItem.from("token1", listOf("account1")))
 
         whenever(cursorManager.readCursorMap()).thenReturn(cursorMap)
-        whenever(syncHelper.getAllPlaidAccessTokenAccountIdSets()).thenReturn(Pair(accountMap, accountAccessTokenSequence))
+        whenever(syncHelper.getAccountMapAndPlaidItems()).thenReturn(Pair(accountMap, plaidItems))
 
         // Create an orchestrator instance
         val orchestrator = PolledSyncOrchestrator(
@@ -64,8 +68,8 @@ internal class PolledSyncOrchestratorTest {
 
         // Verify interactions
         verify(cursorManager).readCursorMap()
-        verify(syncHelper).getAllPlaidAccessTokenAccountIdSets()
-        verify(plaidSyncService).initializeCursors(eq(accountAccessTokenSequence), eq(cursorMap))
+        verify(syncHelper).getAccountMapAndPlaidItems()
+        verify(plaidSyncService).initializeCursors(eq(plaidItems), eq(cursorMap))
         verify(cursorManager).writeCursorMap(eq(cursorMap))
     }
 
@@ -239,13 +243,13 @@ internal class PolledSyncOrchestratorTest {
         convertResult: TransactionConverter.ConvertPollSyncResult
     ) = runBlocking {
         // Setup
-        val cursorMap = mutableMapOf<String, String>() // PlaidAccessToken to PlaidSyncCursor
-        val accountAccessTokenSequence = sequenceOf(Pair("token1", listOf("account1")))
+        val cursorMap = mutableMapOf<String, String>() // PlaidItemKey to PlaidSyncCursor
+        val plaidItems = sequenceOf(PlaidItem.from("token1", listOf("account1")))
 
         whenever(cursorManager.readCursorMap()).thenReturn(cursorMap)
-        whenever(syncHelper.getAllPlaidAccessTokenAccountIdSets()).thenReturn(Pair(accountMap, accountAccessTokenSequence))
+        whenever(syncHelper.getAccountMapAndPlaidItems()).thenReturn(Pair(accountMap, plaidItems))
         whenever(fireflyTransactionService.fetchExistingFireflyTransactions()).thenReturn(existingFireflyTxs)
-        whenever(plaidSyncService.processPlaidTransactions(eq(accountAccessTokenSequence), eq(cursorMap))).thenReturn(plaidTransactionResult)
+        whenever(plaidSyncService.processPlaidTransactions(eq(plaidItems), any())).thenReturn(plaidTransactionResult)
         whenever(converter.convertPollSync(
             eq(accountMap),
             eq(plaidTransactionResult.created),
@@ -265,11 +269,11 @@ internal class PolledSyncOrchestratorTest {
         )
 
         // Call the method we want to test
-        orchestrator.processTransactions(accountMap, accountAccessTokenSequence, cursorMap)
+        orchestrator.processTransactions(accountMap, plaidItems, cursorMap)
 
         // Verify interactions
         verify(fireflyTransactionService).fetchExistingFireflyTransactions()
-        verify(plaidSyncService).processPlaidTransactions(eq(accountAccessTokenSequence), eq(cursorMap))
+        verify(plaidSyncService).processPlaidTransactions(eq(plaidItems), eq(cursorMap))
         verify(converter).convertPollSync(
             eq(accountMap),
             eq(plaidTransactionResult.created),
@@ -283,5 +287,43 @@ internal class PolledSyncOrchestratorTest {
             eq(convertResult.deletes)
         )
         verify(cursorManager).writeCursorMap(eq(cursorMap))
+    }
+
+    @Test
+    fun `failed Firefly write does not advance Plaid cursor`() = runBlocking {
+        val item = PlaidItem.from("token1", listOf("account1"))
+        val cursorMap = mutableMapOf(item.key to "old-cursor")
+        val emptyPlaidResult = PlaidTransactionResult(emptyList(), emptyList(), emptyList())
+        val emptyConvertResult = TransactionConverter.ConvertPollSyncResult(emptyList(), emptyList(), emptyList())
+        whenever(fireflyTransactionService.fetchExistingFireflyTransactions()).thenReturn(emptyList())
+        whenever(plaidSyncService.processPlaidTransactions(any(), any())).thenAnswer { invocation ->
+            @Suppress("UNCHECKED_CAST")
+            val candidateCursorMap = invocation.arguments[1] as MutableMap<PlaidItemKey, PlaidSyncCursor>
+            candidateCursorMap[item.key] = "new-cursor"
+            emptyPlaidResult
+        }
+        whenever(converter.convertPollSync(any(), any(), any(), any(), any())).thenReturn(emptyConvertResult)
+        whenever(
+            fireflyTransactionService.processFireflyTransactionUpdates(any(), any(), any()),
+        ).thenThrow(RuntimeException("Firefly unavailable"))
+        val orchestrator = PolledSyncOrchestrator(
+            30,
+            syncHelper,
+            cursorManager,
+            plaidSyncService,
+            fireflyTransactionService,
+            converter,
+        )
+
+        assertFailsWith<RuntimeException> {
+            orchestrator.processTransactions(
+                mapOf("account1" to 1),
+                sequenceOf(item),
+                cursorMap,
+            )
+        }
+
+        assertEquals(mapOf(item.key to "old-cursor"), cursorMap)
+        verify(cursorManager, never()).writeCursorMap(any())
     }
 }

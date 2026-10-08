@@ -9,6 +9,7 @@ import net.djvk.fireflyPlaidConnector2.api.plaid.models.CounterpartyType
 import net.djvk.fireflyPlaidConnector2.api.plaid.models.Location
 import net.djvk.fireflyPlaidConnector2.api.plaid.models.TransactionCode
 import net.djvk.fireflyPlaidConnector2.api.plaid.models.TransactionCounterparty
+import net.djvk.fireflyPlaidConnector2.config.properties.FireflyCategoryConfig
 import net.djvk.fireflyPlaidConnector2.config.properties.TransactionStyleConfig
 import net.djvk.fireflyPlaidConnector2.lib.FireflyFixtures
 import net.djvk.fireflyPlaidConnector2.lib.PlaidFixtures
@@ -16,6 +17,7 @@ import net.djvk.fireflyPlaidConnector2.lib.defaultLocalNow
 import net.djvk.fireflyPlaidConnector2.lib.defaultOffsetNow
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.assertThatThrownBy
+import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.Arguments
@@ -696,8 +698,112 @@ internal class TransactionConverterTest {
         }
 
         @JvmStatic
+        fun provideFireflyCategoryCases(): List<Arguments> {
+            val beer = PersonalFinanceCategoryEnum.FOOD_AND_DRINK_BEER_WINE_AND_LIQUOR
+            return listOf(
+                Arguments.of(
+                    "the category is left unset while Firefly categorization is disabled",
+                    FireflyCategoryConfig(),
+                    beer,
+                    null,
+                ),
+                Arguments.of(
+                    "the primary Plaid category is mapped by default",
+                    FireflyCategoryConfig(enable = true),
+                    beer,
+                    "Food and Drink",
+                ),
+                Arguments.of(
+                    "a detailed override replaces the primary default",
+                    FireflyCategoryConfig(
+                        enable = true,
+                        overrides = mapOf("food-and-drink-beer-wine-and-liquor" to "Alcohol"),
+                    ),
+                    beer,
+                    "Alcohol",
+                ),
+                Arguments.of(
+                    "a primary override applies to every detailed category beneath it",
+                    FireflyCategoryConfig(
+                        enable = true,
+                        overrides = mapOf("food-and-drink" to "Eating"),
+                    ),
+                    beer,
+                    "Eating",
+                ),
+                Arguments.of(
+                    "a detailed override wins over a primary override",
+                    FireflyCategoryConfig(
+                        enable = true,
+                        overrides = mapOf(
+                            "food-and-drink" to "Eating",
+                            "food-and-drink-beer-wine-and-liquor" to "Alcohol",
+                        ),
+                    ),
+                    beer,
+                    "Alcohol",
+                ),
+                Arguments.of(
+                    "override keys match ignoring case and separator style",
+                    FireflyCategoryConfig(
+                        enable = true,
+                        overrides = mapOf("FOOD_AND_DRINK_BEER_WINE_AND_LIQUOR" to "Alcohol"),
+                    ),
+                    beer,
+                    "Alcohol",
+                ),
+                Arguments.of(
+                    "a transaction Plaid did not categorize is left unset",
+                    FireflyCategoryConfig(enable = true),
+                    null,
+                    null,
+                ),
+            )
+        }
+
+        @JvmStatic
         fun provideDescriptionCases(): List<Arguments> {
             return listOf(
+                Arguments.of(
+                    "an original description identical to the merchant name is not repeated",
+                    TransactionStyleConfig(null),
+                    "unused", // Plaid "name"
+                    "Joe's Taproom", // Plaid "merchantName"
+                    "Joe's Taproom", // Plaid "originalDescription"
+                    "Joe's Taproom", // Expected FF description
+                ),
+                Arguments.of(
+                    "an original description differing only in case and punctuation is not repeated",
+                    TransactionStyleConfig(null),
+                    "unused", // Plaid "name"
+                    "Joe's Taproom", // Plaid "merchantName"
+                    "JOES TAPROOM", // Plaid "originalDescription"
+                    "Joe's Taproom", // Expected FF description
+                ),
+                Arguments.of(
+                    "an original description carrying extra detail is still appended",
+                    TransactionStyleConfig(null),
+                    "unused", // Plaid "name"
+                    "Joe's Taproom", // Plaid "merchantName"
+                    "JOES TAPROOM ANYTOWN US", // Plaid "originalDescription"
+                    "Joe's Taproom: JOES TAPROOM ANYTOWN US", // Expected FF description
+                ),
+                Arguments.of(
+                    "a blank original description is not appended",
+                    TransactionStyleConfig(null),
+                    "unused", // Plaid "name"
+                    "Joe's Taproom", // Plaid "merchantName"
+                    "   ", // Plaid "originalDescription"
+                    "Joe's Taproom", // Expected FF description
+                ),
+                Arguments.of(
+                    "redundancy is also checked against the name fallback",
+                    TransactionStyleConfig(null),
+                    "ACH DEBIT", // Plaid "name"
+                    null, // Plaid "merchantName"
+                    "ACH DEBIT", // Plaid "originalDescription"
+                    "ACH DEBIT", // Expected FF description
+                ),
                 Arguments.of(
                     "Expression can access fields from the Plaid transaction",
                     TransactionStyleConfig("transaction.name + ': ' + transaction.originalDescription"),
@@ -854,6 +960,126 @@ internal class TransactionConverterTest {
 
             assertEquals(expectedResult, actual)
         }
+    }
+
+    @Test
+    fun `settling a pending credit card transaction preserves Firefly metadata`() = runBlocking {
+        val pendingTransactionId = "card-pending-transaction"
+        val postedTransactionId = "card-posted-transaction"
+        val existingFireflyTransaction = TransactionRead(
+            "transactions",
+            "firefly-transaction-id",
+            FireflyFixtures.getTransaction(
+                amount = "42.15",
+                description = "Pending card purchase",
+                sourceId = "1",
+                destinationName = "Merchant",
+                externalId = "plaid-$pendingTransactionId",
+                budgetId = "budget-1",
+                budgetName = "Dining",
+                categoryId = "category-1",
+                categoryName = "Restaurants",
+                billId = "bill-1",
+                billName = "Credit card",
+                reconciled = true,
+                notes = "Keep this note",
+                tags = listOf("manually-reviewed"),
+                internalReference = "user-reference",
+            ),
+            ObjectLink(),
+        )
+        val postedPlaidTransaction = PlaidFixtures.getPaymentTransaction(
+            accountId = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            amount = 42.15,
+            name = "Card posted purchase",
+            pending = false,
+            pendingTransactionId = pendingTransactionId,
+            transactionId = postedTransactionId,
+        )
+        val converter = TransactionConverter(
+            useNameForDestination = false,
+            enablePrimaryCategorization = true,
+            primaryCategoryPrefix = "primary-",
+            enableDetailedCategorization = true,
+            detailedCategoryPrefix = "detailed-",
+            timeZoneString = "America/New_York",
+            transferMatchWindowDays = 10L,
+            txStyle = defaultStyle,
+        )
+
+        val result = converter.convertPollSync(
+            PlaidFixtures.getStandardAccountMapping(),
+            listOf(postedPlaidTransaction),
+            emptyList(),
+            listOf(pendingTransactionId),
+            listOf(existingFireflyTransaction),
+        )
+
+        assertThat(result.creates).isEmpty()
+        assertThat(result.deletes).isEmpty()
+        assertThat(result.updates).hasSize(1)
+        val update = result.updates.single()
+        assertThat(update.id).isEqualTo("firefly-transaction-id")
+        assertThat(update.applyRules).isFalse()
+        assertThat(update.toTransactionUpdate().applyRules).isFalse()
+        assertThat(update.tx.externalId).isEqualTo("plaid-$postedTransactionId")
+        assertThat(update.tx.description).isEqualTo("Card posted purchase")
+        assertThat(update.tx.budgetId).isEqualTo("budget-1")
+        assertThat(update.tx.categoryId).isEqualTo("category-1")
+        assertThat(update.tx.billId).isEqualTo("bill-1")
+        assertThat(update.tx.reconciled).isTrue()
+        assertThat(update.tx.notes).isEqualTo("Keep this note")
+        assertThat(update.tx.internalReference).isEqualTo("user-reference")
+        assertThat(update.tx.tags).contains(
+            "manually-reviewed",
+            "primary-transfer-out",
+            "detailed-transfer-out-account-transfer",
+        )
+    }
+
+    @Test
+    fun `pending transactions are not combined into a transfer`() = runBlocking {
+        val converter = TransactionConverter(
+            useNameForDestination = false,
+            enablePrimaryCategorization = false,
+            primaryCategoryPrefix = "primary-",
+            enableDetailedCategorization = false,
+            detailedCategoryPrefix = "detailed-",
+            timeZoneString = "America/New_York",
+            transferMatchWindowDays = 10L,
+            txStyle = defaultStyle,
+        )
+        val pendingWithdrawal = PlaidFixtures.getTransferTestTransaction(
+            datetime = defaultOffsetNow,
+            personalFinanceCategory = PersonalFinanceCategoryEnum.TRANSFER_OUT_ACCOUNT_TRANSFER,
+            amount = 75.0,
+            pendingTransactionId = null,
+            accountId = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            pending = true,
+            transactionId = "pending-withdrawal",
+        )
+        val pendingDeposit = PlaidFixtures.getTransferTestTransaction(
+            datetime = defaultOffsetNow,
+            personalFinanceCategory = PersonalFinanceCategoryEnum.TRANSFER_IN_ACCOUNT_TRANSFER,
+            amount = -75.0,
+            pendingTransactionId = null,
+            accountId = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            pending = true,
+            transactionId = "pending-deposit",
+        )
+
+        val result = converter.convertPollSync(
+            PlaidFixtures.getStandardAccountMapping(),
+            listOf(pendingWithdrawal, pendingDeposit),
+            emptyList(),
+            emptyList(),
+            emptyList(),
+        )
+
+        assertThat(result.creates).hasSize(2)
+        assertThat(result.creates).allMatch { it.tx.type != TransactionTypeProperty.transfer }
+        assertThat(result.updates).isEmpty()
+        assertThat(result.deletes).isEmpty()
     }
 
     @ParameterizedTest(name = "{index} => {0}")
@@ -1081,5 +1307,44 @@ internal class TransactionConverterTest {
         )
 
         assertThat(actual).isEqualTo(listOf(expectedFfTx))
+    }
+
+    @ParameterizedTest(name = "{index} => {0}")
+    @MethodSource("provideFireflyCategoryCases")
+    fun convertedTxHasExpectedFireflyCategory(
+        testName: String,
+        fireflyCategories: FireflyCategoryConfig,
+        personalFinanceCategory: PersonalFinanceCategoryEnum?,
+        expectedCategoryName: String?,
+    ) {
+        val converter = TransactionConverter(
+            useNameForDestination = true,
+            enablePrimaryCategorization = false,
+            primaryCategoryPrefix = "a",
+            enableDetailedCategorization = false,
+            detailedCategoryPrefix = "b",
+            timeZoneString = "America/New_York",
+            transferMatchWindowDays = 10L,
+            txStyle = defaultStyle,
+            fireflyCategories = fireflyCategories,
+        )
+
+        val plaidTx = PlaidFixtures.getPaymentTransaction(
+            accountId = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            name = "Joe's Taproom",
+            merchantName = "Joe's Taproom",
+            personalFinanceCategory = personalFinanceCategory?.toPersonalFinanceCategory(),
+            transactionId = "plaidId",
+            amount = 123.45,
+        )
+
+        val actual = convertCreates(
+            converter = converter,
+            poll = true,
+            inputPlaidTxs = listOf(plaidTx),
+            accountMap = PlaidFixtures.getStandardAccountMapping(),
+        )
+
+        assertThat(actual.single().tx.categoryName).isEqualTo(expectedCategoryName)
     }
 }

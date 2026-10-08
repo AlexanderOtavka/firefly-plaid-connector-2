@@ -1,0 +1,152 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  # The weekly update dispatches this on its branch (a PR opened with GITHUB_TOKEN gets no
+  # pull_request run), and on main after merging it (nor does that push get a push run).
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+env:
+  IMAGE_NAME: ghcr.io/alexanderotavka/firefly-plaid-connector-2
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      # The wrapper is still committed for building without Nix, so keep checking that its
+      # jar is a genuine Gradle release.
+      - uses: gradle/actions/wrapper-validation@v4
+
+      - uses: DeterminateSystems/determinate-nix-action@v3
+
+      # Builds the jar and the image from the pinned deps.json, and runs the Gradle tests,
+      # the dashboard's against a throwaway PostgreSQL.
+      - name: nix flake check
+        run: nix flake check -L
+
+  container:
+    needs: check
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: DeterminateSystems/determinate-nix-action@v3
+
+      - name: Build and load the image
+        run: |
+          nix build .#container --out-link container.tar.gz
+          docker load < container.tar.gz
+
+      # Runs the image the way a hardened Kubernetes pod would: uid 1000, a read-only root, a writable
+      # /tmp, configuration from the environment, and JAVA_TOOL_OPTIONS for the heap.
+      - name: Check the image runs as uid 1000 with a read-only root
+        env:
+          IMAGE: firefly-plaid-connector-2:latest
+        run: |
+          set -euo pipefail
+          test "$(docker image inspect --format '{{.Config.User}}' "$IMAGE")" = "1000:1000"
+          run() {
+            docker run --read-only --tmpfs /tmp -e JAVA_TOOL_OPTIONS=-XX:MaxRAMPercentage=75 "$@"
+          }
+          # Batch mode with no configuration: the JVM and Spring start, then refuse, and say why.
+          out="$(run --rm "$IMAGE" 2>&1 || true)"
+          grep -q "Picked up JAVA_TOOL_OPTIONS: -XX:MaxRAMPercentage=75" <<<"$out"
+          grep -q "Could not resolve placeholder 'fireflyPlaidConnector2.plaid.url'" <<<"$out" || { echo "$out"; exit 1; }
+          # The dashboard: migrates its database and answers its health check. Nothing here
+          # reaches Plaid, Firefly, or Kubernetes, which it only calls on demand.
+          run -d --name manager --network host \
+            -e FIREFLYPLAIDCONNECTOR2_SYNCMODE=manage \
+            -e FIREFLYPLAIDCONNECTOR2_ITEMSTORE=database \
+            -e FIREFLYPLAIDCONNECTOR2_DATABASE_URL=jdbc:postgresql://localhost:5432/postgres \
+            -e FIREFLYPLAIDCONNECTOR2_DATABASE_USERNAME=postgres \
+            -e FIREFLYPLAIDCONNECTOR2_DATABASE_PASSWORD=postgres \
+            -e FIREFLYPLAIDCONNECTOR2_MANAGE_PUBLICBASEURL=https://firefly.example.com \
+            -e FIREFLYPLAIDCONNECTOR2_MANAGE_ALLOWEDHOSTS=firefly.example.com \
+            -e FIREFLYPLAIDCONNECTOR2_MANAGE_ALLOWEDEMAILS=owner@example.com \
+            -e FIREFLYPLAIDCONNECTOR2_MANAGE_OAUTH_CLIENTID=1 \
+            -e FIREFLYPLAIDCONNECTOR2_MANAGE_OAUTH_CLIENTSECRET=x \
+            -e FIREFLYPLAIDCONNECTOR2_PLAID_URL=http://127.0.0.1:9 \
+            -e FIREFLYPLAIDCONNECTOR2_PLAID_CLIENTID=x \
+            -e FIREFLYPLAIDCONNECTOR2_PLAID_SECRET=x \
+            -e FIREFLYPLAIDCONNECTOR2_FIREFLY_URL=http://127.0.0.1:9 \
+            -e FIREFLYPLAIDCONNECTOR2_FIREFLY_PERSONALACCESSTOKEN=x \
+            "$IMAGE"
+          for _ in $(seq 1 60); do
+            curl -sf http://localhost:8080/plaid/-/healthz && break
+            sleep 2
+          done
+          docker logs manager
+          curl -sf http://localhost:8080/plaid/-/healthz
+          # Logged-out API calls are refused, so security is wired up too.
+          test "$(curl -s -o /dev/null -w '%{http_code}' -H 'Host: firefly.example.com' http://localhost:8080/plaid/api/items)" = 401
+          docker rm -f manager
+
+      - name: Log in to GHCR
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish sha-<commit> and latest
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        run: |
+          set -euo pipefail
+          for tag in "sha-${GITHUB_SHA}" latest; do
+            docker tag firefly-plaid-connector-2:latest "${IMAGE_NAME}:${tag}"
+            docker push "${IMAGE_NAME}:${tag}"
+          done
+          echo "Published \`${IMAGE_NAME}@$(docker image inspect --format '{{index .RepoDigests 0}}' "${IMAGE_NAME}:sha-${GITHUB_SHA}" | cut -d@ -f2)\`" >> "$GITHUB_STEP_SUMMARY"
+    permissions:
+      contents: read
+      packages: write
+
+  # Merges the weekly update once everything above passed on its branch.
+  automerge:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/automated/update-deps'
+    needs: [check, container]
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Merge the update PR, then build and publish main
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          pr="$(gh pr list --head automated/update-deps --state open --json number,headRefOid \
+            --jq ".[] | select(.headRefOid == \"${GITHUB_SHA}\") | .number")"
+          if [ -z "$pr" ]; then
+            echo "No open update PR at ${GITHUB_SHA}; nothing to merge."
+            exit 0
+          fi
+          gh pr merge "$pr" --squash --delete-branch
+          gh workflow run ci.yml --ref main

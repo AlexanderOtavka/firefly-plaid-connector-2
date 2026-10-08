@@ -18,6 +18,7 @@ data class FireflyTransactionDto(
      */
     val id: FireflyTransactionId?,
     val tx: TransactionSplit,
+    val applyRules: Boolean = true,
 ) {
     val transactionId: String
         get() = id ?: throw RuntimeException("Can't use a Firefly transaction without an id for sorting")
@@ -29,7 +30,7 @@ data class FireflyTransactionDto(
         return TransactionStore(
             listOf(tx),
             errorIfDuplicateHash = true,
-            applyRules = true,
+            applyRules = applyRules,
             fireWebhooks = true,
             groupTitle = null,
         )
@@ -38,7 +39,7 @@ data class FireflyTransactionDto(
     fun toTransactionUpdate(): TransactionUpdate {
         return TransactionUpdate(
             transactions = listOf(tx.toTransactionSplitUpdate()),
-            applyRules = true,
+            applyRules = applyRules,
             fireWebhooks = true,
             groupTitle = tx.description,
         )
