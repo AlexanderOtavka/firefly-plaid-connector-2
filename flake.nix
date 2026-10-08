@@ -31,6 +31,8 @@
       }
       // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
         inherit (self.packages.${pkgs.stdenv.hostPlatform.system}) container;
+        # NixOS VM tests against a real Firefly III.
+        inherit (pkgs.callPackage ./nix/vm-checks.nix {inherit firefly-plaid-connector-2;}) firefly-accounts;
       });
 
     devShells = forAllSystems (pkgs: let

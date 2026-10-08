@@ -20,6 +20,7 @@
 
 package net.djvk.fireflyPlaidConnector2.api.firefly.models
 
+import com.fasterxml.jackson.annotation.JsonInclude
 import com.fasterxml.jackson.annotation.JsonProperty
 
 /**
@@ -50,7 +51,9 @@ import com.fasterxml.jackson.annotation.JsonProperty
  * @param longitude Latitude of the accounts's location, if applicable. Can be used to draw a map.
  * @param zoomLevel Zoom level for the map, if drawn. This to set the box right. Unfortunately this is a proprietary value because each map provider has different zoom levels.
  */
-
+// Local change: omit unset fields. Firefly validates a present null against the field's
+// rules, so "currency_id": null fails "must be a number" where omitting it would default.
+@JsonInclude(JsonInclude.Include.NON_NULL)
 data class AccountStore(
 
     @field:JsonProperty("name")
