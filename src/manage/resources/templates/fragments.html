@@ -14,7 +14,7 @@
 <header th:fragment="page-header" class="main-header">
     <a class="logo" th:href="@{/}">Bank links</a>
     <nav class="navbar">
-        <a class="nav-link" href="/">Back to Firefly</a>
+        <a class="nav-link" th:each="link : ${@navLinks.links}" th:href="${link.url}" th:text="${link.label}">Back to Firefly</a>
         <form th:action="@{/logout}" method="post" class="logout">
             <input type="hidden" th:if="${_csrf != null}" th:name="${_csrf.parameterName}" th:value="${_csrf.token}">
             <button type="submit" class="nav-link">Log out</button>
@@ -25,7 +25,7 @@
 <header th:fragment="page-header-plain" class="main-header">
     <a class="logo" th:href="@{/}">Bank links</a>
     <nav class="navbar">
-        <a class="nav-link" href="/">Back to Firefly</a>
+        <a class="nav-link" th:each="link : ${@navLinks.links}" th:href="${link.url}" th:text="${link.label}">Back to Firefly</a>
     </nav>
 </header>
 </body>

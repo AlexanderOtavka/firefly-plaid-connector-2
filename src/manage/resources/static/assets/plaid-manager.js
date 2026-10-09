@@ -162,6 +162,43 @@
     if (!name.hidden) name.focus();
   });
 
+  // Backfills: a row opens in a dialog, one column per line, which reads better than the
+  // table's sideways scroll on a phone.
+  const runDialog = document.getElementById("run-dialog");
+
+  function openRun(row) {
+    const headings = Array.from(row.closest("table").querySelectorAll("thead th")).map((th) => th.textContent.trim());
+    const list = runDialog.querySelector(".modal-details");
+    list.replaceChildren();
+    Array.from(row.cells).forEach(function (cell, i) {
+      if (i === 0) return;
+      const term = document.createElement("dt");
+      term.textContent = headings[i] || "";
+      const value = document.createElement("dd");
+      value.append(...Array.from(cell.childNodes, (node) => node.cloneNode(true)));
+      if (!value.textContent.trim()) value.textContent = "—";
+      list.append(term, value);
+    });
+    document.getElementById("run-dialog-title").textContent = "Backfill #" + row.dataset.runId;
+    runDialog.showModal();
+  }
+
+  if (runDialog) {
+    document.addEventListener("click", function (event) {
+      const row = event.target.closest("tr.run-row");
+      if (row && !event.target.closest("a, button")) openRun(row);
+      // The close button, or a click on the backdrop around the dialog's box.
+      if (event.target.closest("[data-close-dialog]") || event.target === runDialog) runDialog.close();
+    });
+    document.addEventListener("keydown", function (event) {
+      const row = event.target.closest && event.target.closest("tr.run-row");
+      if (row && event.target === row && (event.key === "Enter" || event.key === " ")) {
+        event.preventDefault();
+        openRun(row);
+      }
+    });
+  }
+
   // Timestamps are rendered in the server's zone (UTC); show them in the browser's instead.
   document.querySelectorAll("time[datetime]").forEach(function (el) {
     const date = new Date(el.dateTime);

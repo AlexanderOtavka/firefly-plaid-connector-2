@@ -33,6 +33,8 @@ data class ItemView(
     val lastErrorAt: Instant?,
     val consecutiveFailures: Int,
     val accounts: List<AccountView>,
+    val earliestTxDate: LocalDate? = null,
+    val latestTxDate: LocalDate? = null,
 ) {
     val isLive get() = status != "retired"
     val canBackfill get() = status == "active" && accounts.any { it.enabled }
@@ -55,6 +57,8 @@ data class ItemView(
             lastErrorAt = item.lastErrorAt,
             consecutiveFailures = item.consecutiveFailures,
             accounts = accounts.map { AccountView.of(it) },
+            earliestTxDate = item.earliestTxDate,
+            latestTxDate = item.latestTxDate,
         )
     }
 }
@@ -98,6 +102,7 @@ data class BackfillRunView(
     val duplicates: Int?,
     val failed: Int?,
     val oldestDate: LocalDate?,
+    val newestDate: LocalDate?,
     val error: String?,
     val dryRun: Boolean,
     val matched: Int?,
@@ -124,6 +129,7 @@ data class BackfillRunView(
             duplicates = run.duplicates,
             failed = run.failed,
             oldestDate = run.oldestDate,
+            newestDate = run.newestDate,
             error = run.error,
             dryRun = run.dryRun,
             matched = run.matched,

@@ -83,6 +83,10 @@ private const val NEW_TOKEN = "access-production-new-secret-0002"
         "fireflyPlaidConnector2.firefly.url=http://127.0.0.1:9",
         "fireflyPlaidConnector2.firefly.personalAccessToken=test-pat",
         "logging.level.org.springframework.beans=INFO",
+        "fireflyPlaidConnector2.manage.navLinks[0].label=Firefly",
+        "fireflyPlaidConnector2.manage.navLinks[0].url=/",
+        "fireflyPlaidConnector2.manage.navLinks[1].label=Grafana",
+        "fireflyPlaidConnector2.manage.navLinks[1].url=https://grafana.example.com/d/plaid",
     ],
 )
 @AutoConfigureMockMvc
@@ -190,6 +194,29 @@ class ManageWebTest {
         // A fragment named "header" also matches every <header> element in fragments.html.
         assertThat(Regex("<header").findAll(body).count()).isEqualTo(1)
         assertThat(body).containsPattern("<time datetime=\"\\d{4}-\\d{2}-\\d{2}T[^\"]*Z\"")
+    }
+
+    @Test
+    fun `the header carries the configured links, and the page no second title`() {
+        val body = perform(get("/").with(owner)).response.contentAsString
+        assertThat(body).contains("<a class=\"nav-link\" href=\"/\">Firefly</a>")
+            .contains("<a class=\"nav-link\" href=\"https://grafana.example.com/d/plaid\">Grafana</a>")
+            .doesNotContain("Back to Firefly")
+            .doesNotContain("<h1")
+        // Pages shown without a session get them too.
+        assertThat(perform(get("/logged-out")).response.contentAsString).contains("Grafana")
+    }
+
+    @Test
+    fun `the Item count includes retired Items, and Items show their synced date range`() {
+        val old = items.insert("item-old-abcd", "access-production-old", "ins_1", "Example Bank", 90, ItemStatus.active)
+        items.retire(old)
+        items.recordSuccess(card, 2, LocalDate.of(2026, 10, 1)..LocalDate.of(2026, 10, 7))
+        items.widenTxDates(card, LocalDate.of(2024, 9, 27)..LocalDate.of(2026, 10, 2))
+        val body = perform(get("/").with(owner)).response.contentAsString
+        assertThat(body).contains("2 of 10 used")
+        assertThat(body).containsPattern("2024-09-27</span> to\\s*<span[^>]*>2026-10-07<")
+        assertThat(body).contains("none synced yet")
     }
 
     @Test

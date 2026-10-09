@@ -17,6 +17,7 @@ import net.djvk.fireflyPlaidConnector2.manage.db.ItemRepository
 import net.djvk.fireflyPlaidConnector2.manage.firefly.FireflyDirectory
 import net.djvk.fireflyPlaidConnector2.manage.plaid.LINK_DAYS_REQUESTED
 import org.slf4j.LoggerFactory
+import org.springframework.beans.factory.annotation.Value
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty
 import org.springframework.stereotype.Controller
 import org.springframework.ui.Model
@@ -37,6 +38,9 @@ class PageController(
     private val reviews: ReviewService,
     private val firefly: FireflyDirectory,
     private val metrics: PlaidMetrics,
+    /** Items a Plaid plan allows, retired ones included; 0 hides the count's limit. */
+    @Value("\${fireflyPlaidConnector2.manage.itemLimit:10}")
+    private val itemLimit: Int,
 ) {
     private val logger = LoggerFactory.getLogger(this::class.java)
 
@@ -48,6 +52,7 @@ class PageController(
         val open = reviewRows.openCounts()
         val runViews = runs.recent().map { BackfillRunView.of(it, open[it.id] ?: 0) }
         model.addAttribute("items", itemViews)
+        model.addAttribute("itemLimit", itemLimit.takeIf { it > 0 })
         model.addAttribute("itemNames", itemViews.associate { it.id to label(it) })
         model.addAttribute("runs", runViews)
         model.addAttribute("activeRun", runViews.firstOrNull { it.status == "pending" || it.status == "running" })

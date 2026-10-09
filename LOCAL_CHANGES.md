@@ -152,3 +152,19 @@ changes.
   test sources, not a JUnit test) to create each kind of asset account and a duplicate through
   `PatFireflyDirectory`, with the client wired as `ApiConfiguration` wires it. The Gradle task
   `vmCheckDist` collects the compiled tests and their runtime classpath for it.
+
+## 2026-10-09: dashboard tweaks
+
+- The header's links are configurable: `fireflyPlaidConnector2.manage.navLinks`, a list of
+  `{label, url}` (`FIREFLYPLAIDCONNECTOR2_MANAGE_NAVLINKS_0_LABEL`/`_0_URL`, ... as environment
+  variables). Unset, it is one "Back to Firefly" link to `/`; URLs must be http(s) or start with `/`.
+  The dashboard no longer repeats "Bank links" as a page heading.
+- Items shows how many Items exist, retired ones included, out of
+  `fireflyPlaidConnector2.manage.itemLimit` (default 10, Plaid's trial; 0 shows the count alone).
+- Items and backfills show the earliest and latest transaction dates synced. `V3` adds
+  `backfill_run.newest_date` and `plaid_item.earliest_tx_date`/`latest_tx_date`, widened by every
+  poll that adds transactions and every backfill that is not a dry run. Upstream files touched:
+  `BatchOutcome.newestDate`, `PlaidTransactionResult.addedDatesByItem`, and an `addedDates`
+  argument to `SyncOutcomeRecorder.itemSucceeded`.
+- Selecting a backfill row opens it in a dialog, one field per line, which reads better on a phone
+  than the table's sideways scroll.

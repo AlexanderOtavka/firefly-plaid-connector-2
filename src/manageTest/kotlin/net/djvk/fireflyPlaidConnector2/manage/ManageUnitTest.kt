@@ -27,6 +27,9 @@ import net.djvk.fireflyPlaidConnector2.manage.plaid.LINK_DAYS_REQUESTED
 import net.djvk.fireflyPlaidConnector2.manage.plaid.LinkMode
 import net.djvk.fireflyPlaidConnector2.manage.plaid.buildLinkTokenRequest
 import net.djvk.fireflyPlaidConnector2.manage.web.FireflyUser
+import net.djvk.fireflyPlaidConnector2.manage.web.NAV_LINKS_PROPERTY
+import net.djvk.fireflyPlaidConnector2.manage.web.NavLink
+import net.djvk.fireflyPlaidConnector2.manage.web.NavLinks
 import net.djvk.fireflyPlaidConnector2.manage.web.isAllowed
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.assertThatThrownBy
@@ -313,5 +316,39 @@ class ConnectorModeEnvironmentPostProcessorTest {
         assertThat(environment.getProperty("server.servlet.session.cookie.same-site")).isEqualTo("lax")
         assertThat(environment.getProperty("server.servlet.session.cookie.secure")).isEqualTo("true")
         assertThat(environment.getProperty("server.servlet.session.timeout")).isEqualTo("30m")
+    }
+}
+
+class NavLinksTest {
+    private fun links(vararg properties: Pair<String, Any>) =
+        NavLinks(StandardEnvironment().apply {
+            propertySources.addFirst(MapPropertySource("test", mapOf(*properties)))
+        }).links
+
+    @Test
+    fun `defaults to one link back to Firefly`() {
+        assertThat(links()).containsExactly(NavLink("Back to Firefly", "/"))
+    }
+
+    @Test
+    fun `takes any number of links, in order`() {
+        assertThat(
+            links(
+                "$NAV_LINKS_PROPERTY[0].label" to "Firefly", "$NAV_LINKS_PROPERTY[0].url" to "/",
+                "$NAV_LINKS_PROPERTY[1].label" to "Grafana", "$NAV_LINKS_PROPERTY[1].url" to "https://grafana.example.com/",
+            )
+        ).containsExactly(NavLink("Firefly", "/"), NavLink("Grafana", "https://grafana.example.com/"))
+    }
+
+    @Test
+    fun `an empty list means no links`() {
+        assertThat(links(NAV_LINKS_PROPERTY to "")).isEmpty()
+    }
+
+    @Test
+    fun `refuses links that are not web links`() {
+        assertThatThrownBy {
+            links("$NAV_LINKS_PROPERTY[0].label" to "Evil", "$NAV_LINKS_PROPERTY[0].url" to "javascript:alert(1)")
+        }.hasMessageContaining("http(s)")
     }
 }

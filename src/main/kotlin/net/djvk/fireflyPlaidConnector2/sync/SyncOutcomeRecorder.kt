@@ -33,6 +33,7 @@ data class BatchOutcome(
     val fetched: Int,
     val counts: InsertCounts,
     val oldestDate: LocalDate?,
+    val newestDate: LocalDate? = null,
     /** Nothing was written to Firefly; the counts are what the run would have done. */
     val dryRun: Boolean = false,
     /** Converted transactions the run could not match safely; see [BackfillReconciler]. */
@@ -93,7 +94,8 @@ data class PlaidErrorInfo(
  * access token.
  */
 interface SyncOutcomeRecorder {
-    fun itemSucceeded(item: PlaidItem, added: Int) {}
+    /** [addedDates] spans the dates of the transactions added, if there were any. */
+    fun itemSucceeded(item: PlaidItem, added: Int, addedDates: ClosedRange<LocalDate>? = null) {}
 
     fun itemFailed(item: PlaidItem, error: PlaidErrorInfo) {}
 

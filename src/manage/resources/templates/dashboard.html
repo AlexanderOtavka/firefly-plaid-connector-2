@@ -4,7 +4,6 @@
 <body th:data-base="@{/}">
 <header th:replace="~{fragments :: page-header}"></header>
 <main class="content">
-    <h1 class="page-title">Bank links</h1>
     <div class="alert alert-danger" id="message" role="alert" hidden></div>
 
     <section class="box box-primary summary">
@@ -24,7 +23,13 @@
         </div>
     </section>
 
-    <h2 class="section-title">Items</h2>
+    <h2 class="section-title">Items
+        <small th:if="${itemLimit != null}" class="item-count"
+               th:text="|${#lists.size(items)} of ${itemLimit} used|">3 of 10 used</small>
+        <small th:if="${itemLimit == null}" class="item-count" th:text="${#lists.size(items)}">3</small>
+    </h2>
+    <p th:if="${itemLimit != null}" class="help-text">Plaid counts every Item ever linked
+        against the limit, retired ones included.</p>
     <div class="box" th:if="${#lists.isEmpty(items)}"><div class="box-body"><p>No Items are linked yet.</p></div></div>
     <article th:each="item : ${items}" class="box item" th:classappend="|item-${item.status}|">
         <div class="box-header">
@@ -45,6 +50,15 @@
                     <span th:text="${item.lastSyncAdded} ?: 0">0</span> new transactions
                 </dd>
                 <dd th:if="${item.lastSyncAt == null}">never</dd>
+                <dt>Transactions</dt>
+                <dd th:if="${item.earliestTxDate != null}">
+                    <span class="nowrap" th:text="${item.earliestTxDate}">2024-09-27</span> to
+                    <span class="nowrap" th:text="${item.latestTxDate} ?: 'unknown'">2026-10-08</span>
+                </dd>
+                <dd th:if="${item.earliestTxDate == null and item.latestTxDate != null}">
+                    unknown to <span class="nowrap" th:text="${item.latestTxDate}">2026-10-08</span>
+                </dd>
+                <dd th:if="${item.earliestTxDate == null and item.latestTxDate == null}">none synced yet</dd>
                 <th:block th:if="${item.lastErrorCode != null}">
                     <dt>Last error</dt>
                     <dd class="text-danger">
@@ -124,10 +138,11 @@
                     <thead>
                     <tr><th>#</th><th>Item</th><th>Requested</th><th>Days</th><th>Status</th><th>Duration</th>
                         <th>Fetched</th><th>Matched</th><th>Updated</th><th>Inserted</th><th>Review</th>
-                        <th>Duplicates</th><th>Failed</th><th>Oldest</th><th>Log</th></tr>
+                        <th>Duplicates</th><th>Failed</th><th>Earliest</th><th>Latest</th><th>Log</th></tr>
                     </thead>
                     <tbody>
-                    <tr th:each="run : ${runs}" th:classappend="|run-${run.status}|">
+                    <tr th:each="run : ${runs}" th:classappend="|run-${run.status}|" class="run-row"
+                        tabindex="0" th:data-run-id="${run.id}" th:aria-label="|Backfill ${run.id}, show details|">
                         <td th:text="${run.id}">1</td>
                         <td class="nowrap" th:text="${itemNames[run.itemId]}">Bank …abcd</td>
                         <td class="nowrap"><time th:datetime="${run.requestedAt}"
@@ -152,17 +167,31 @@
                         <td th:text="${run.duplicates}">0</td>
                         <td th:text="${run.failed}">0</td>
                         <td class="nowrap" th:text="${run.oldestDate}">2024-09-27</td>
+                        <td class="nowrap" th:text="${run.newestDate}">2026-10-08</td>
                         <td><a th:if="${run.jobName != null}" th:href="@{/api/backfills/{id}/log(id=${run.id})}"
                                target="_blank" rel="noopener">log</a></td>
                     </tr>
                     </tbody>
                 </table>
             </div>
+            <p class="help-text">Select a row to see it in full. Earliest and Latest are the dates
+                of the oldest and newest transactions the run fetched.</p>
             <p class="help-text">Matched transactions were already in Firefly; Updated is how many of those
                 changed. In a dry run, Updated and Inserted are what the run would have written.
                 Review lists what could not be matched safely; nothing was written for those.</p>
         </div>
     </section>
+
+    <dialog class="modal" id="run-dialog" aria-labelledby="run-dialog-title">
+        <!-- Focused on open, so the close button is not shown focused; Tab still reaches it. -->
+        <div class="modal-content box box-primary" tabindex="-1" autofocus>
+            <div class="box-header">
+                <h2 class="box-title" id="run-dialog-title">Backfill</h2>
+                <button type="button" class="modal-close" data-close-dialog aria-label="Close">&times;</button>
+            </div>
+            <dl class="box-body details modal-details"></dl>
+        </div>
+    </dialog>
 </main>
 <script src="https://cdn.plaid.com/link/v2/stable/link-initialize.js"></script>
 <script th:src="@{/assets/plaid-manager.js}"></script>

@@ -9,6 +9,7 @@ import net.djvk.fireflyPlaidConnector2.api.plaid.models.TransactionsSyncResponse
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.stereotype.Component
+import java.time.LocalDate
 import net.djvk.fireflyPlaidConnector2.api.plaid.models.Transaction as PlaidTransaction
 
 /**
@@ -92,6 +93,7 @@ class PlaidSyncService(
         val plaidUpdatedTxs = mutableListOf<PlaidTransaction>()
         val plaidDeletedTxs = mutableListOf<PlaidTransactionId>()
         val addedByItem = mutableMapOf<PlaidItemKey, Int>()
+        val addedDatesByItem = mutableMapOf<PlaidItemKey, ClosedRange<LocalDate>>()
         val failedItems = mutableSetOf<PlaidItemKey>()
 
         itemLoop@ for (item in plaidItems) {
@@ -127,6 +129,12 @@ class PlaidSyncService(
                 // The transaction sync endpoint doesn't take accountId as a parameter, so do that filtering here
                 val added = response.added.filter { accountIdSet.contains(it.accountId) }
                 addedByItem[item.key] = (addedByItem[item.key] ?: 0) + added.size
+                if (added.isNotEmpty()) {
+                    val dates = added.map { it.date }
+                    val seen = addedDatesByItem[item.key]
+                    addedDatesByItem[item.key] = minOf(dates.min(), seen?.start ?: LocalDate.MAX)..
+                            maxOf(dates.max(), seen?.endInclusive ?: LocalDate.MIN)
+                }
                 plaidCreatedTxs.addAll(added)
                 plaidUpdatedTxs.addAll(response.modified.filter { accountIdSet.contains(it.accountId) })
                 plaidDeletedTxs.addAll(response.removed.mapNotNull { it.transactionId })
@@ -141,6 +149,7 @@ class PlaidSyncService(
             plaidDeletedTxs,
             addedByItem,
             failedItems,
+            addedDatesByItem,
         )
     }
 
@@ -186,4 +195,6 @@ data class PlaidTransactionResult(
     /** Local change: per-Item counts and failures, for [SyncOutcomeRecorder]. */
     val addedByItem: Map<PlaidItemKey, Int> = emptyMap(),
     val failedItems: Set<PlaidItemKey> = emptySet(),
+    /** Local change: the range of dates of each Item's added transactions. */
+    val addedDatesByItem: Map<PlaidItemKey, ClosedRange<LocalDate>> = emptyMap(),
 )

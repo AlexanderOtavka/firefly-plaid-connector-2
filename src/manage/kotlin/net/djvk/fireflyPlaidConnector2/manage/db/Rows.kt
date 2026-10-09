@@ -47,6 +47,9 @@ data class PlaidItemRow(
     val lastErrorMessage: String?,
     val lastErrorAt: Instant?,
     val consecutiveFailures: Int,
+    /** The range of transaction dates polling and backfills have synced. */
+    val earliestTxDate: LocalDate? = null,
+    val latestTxDate: LocalDate? = null,
 ) {
     /** Only the last 4 characters of the Plaid Item ID are ever shown or exported. */
     val itemIdLast4: String get() = plaidItemId.takeLast(4)
@@ -104,6 +107,7 @@ data class BackfillRunRow(
     val needsReview: Int?,
     val oldestDate: LocalDate?,
     val error: String?,
+    val newestDate: LocalDate? = null,
 )
 
 /** Strips anything shaped like a Plaid access token before text is stored or shown. */

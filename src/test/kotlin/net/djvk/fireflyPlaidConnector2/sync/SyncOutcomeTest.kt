@@ -31,7 +31,7 @@ class SyncOutcomeTest {
             failures += item.key to error
         }
 
-        override fun itemSucceeded(item: PlaidItem, added: Int) {
+        override fun itemSucceeded(item: PlaidItem, added: Int, addedDates: ClosedRange<java.time.LocalDate>?) {
             successes += item.key to added
         }
     }

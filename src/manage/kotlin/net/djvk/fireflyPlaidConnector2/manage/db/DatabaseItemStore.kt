@@ -18,6 +18,7 @@ import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty
 import org.springframework.stereotype.Component
+import java.time.LocalDate
 
 private const val KEY_PREFIX = "db-item-"
 
@@ -117,8 +118,8 @@ class DatabaseSyncOutcomeRecorder(
     private val logger = LoggerFactory.getLogger(this::class.java)
     private val run: Long? get() = runId.trim().toLongOrNull()
 
-    override fun itemSucceeded(item: PlaidItem, added: Int) {
-        itemIdFromKey(item.key)?.let { items.recordSuccess(it, added) }
+    override fun itemSucceeded(item: PlaidItem, added: Int, addedDates: ClosedRange<LocalDate>?) {
+        itemIdFromKey(item.key)?.let { items.recordSuccess(it, added, addedDates) }
     }
 
     override fun itemFailed(item: PlaidItem, error: PlaidErrorInfo) {
@@ -133,6 +134,12 @@ class DatabaseSyncOutcomeRecorder(
         val id = run ?: return
         reviews.insertAll(id, outcome.reviews)
         runs.finish(id, BackfillStatus.succeeded, outcome, null)
+        // What the run fetched is now in Firefly, matched or inserted, unless it wrote nothing.
+        val oldest = outcome.oldestDate ?: return
+        val newest = outcome.newestDate ?: return
+        if (!outcome.dryRun) {
+            runs.find(id)?.let { items.widenTxDates(it.itemId, oldest..newest) }
+        }
     }
 
     override fun batchFailed(outcome: BatchOutcome, error: Throwable) {

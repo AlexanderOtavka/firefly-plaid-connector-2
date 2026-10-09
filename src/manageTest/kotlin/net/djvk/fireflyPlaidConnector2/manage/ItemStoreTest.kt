@@ -174,12 +174,21 @@ class ItemStoreTest {
             assertThat(it.consecutiveFailures).isEqualTo(1)
         }
 
-        recorder.itemSucceeded(item, 4)
+        recorder.itemSucceeded(item, 4, LocalDate.of(2026, 9, 3)..LocalDate.of(2026, 9, 5))
         items.find(one)!!.let {
             assertThat(it.status).isEqualTo(ItemStatus.active)
             assertThat(it.lastErrorCode).isNull()
             assertThat(it.lastSyncAdded).isEqualTo(4)
             assertThat(it.lastSyncAt).isNotNull()
+            assertThat(it.earliestTxDate).isEqualTo(LocalDate.of(2026, 9, 3))
+            assertThat(it.latestTxDate).isEqualTo(LocalDate.of(2026, 9, 5))
+        }
+        // A sync that adds nothing leaves the range alone; one that adds widens it.
+        recorder.itemSucceeded(item, 0)
+        recorder.itemSucceeded(item, 1, LocalDate.of(2026, 9, 8)..LocalDate.of(2026, 9, 8))
+        items.find(one)!!.let {
+            assertThat(it.earliestTxDate).isEqualTo(LocalDate.of(2026, 9, 3))
+            assertThat(it.latestTxDate).isEqualTo(LocalDate.of(2026, 9, 8))
         }
 
         repeat(3) { recorder.itemFailed(item, PlaidErrorInfo("INTERNAL_SERVER_ERROR", null)) }
@@ -195,8 +204,13 @@ class ItemStoreTest {
 
         recorder.batchStarted()
         assertThat(runs.find(run)!!.status).isEqualTo(BackfillStatus.running)
-        recorder.batchFinished(BatchOutcome(10, InsertCounts(4, 6, 0), LocalDate.of(2024, 9, 30)))
+        recorder.batchFinished(BatchOutcome(10, InsertCounts(4, 6, 0), LocalDate.of(2024, 9, 30), LocalDate.of(2026, 9, 1)))
+        items.find(one)!!.let {
+            assertThat(it.earliestTxDate).isEqualTo(LocalDate.of(2024, 9, 30))
+            assertThat(it.latestTxDate).isEqualTo(LocalDate.of(2026, 9, 1))
+        }
         runs.find(run)!!.let {
+            assertThat(it.newestDate).isEqualTo(LocalDate.of(2026, 9, 1))
             assertThat(it.status).isEqualTo(BackfillStatus.succeeded)
             assertThat(it.fetched).isEqualTo(10)
             assertThat(it.inserted).isEqualTo(4)
@@ -238,6 +252,7 @@ class ItemStoreTest {
             12,
             InsertCounts(inserted = 1, matched = 10, updated = 3, needsReview = 1),
             LocalDate.of(2026, 8, 1),
+            LocalDate.of(2026, 9, 2),
             dryRun = true,
             reviews = listOf(
                 ReviewCandidate(
@@ -270,7 +285,10 @@ class ItemStoreTest {
             assertThat(it.matched).isEqualTo(10)
             assertThat(it.updated).isEqualTo(3)
             assertThat(it.needsReview).isEqualTo(1)
+            assertThat(it.newestDate).isEqualTo(LocalDate.of(2026, 9, 2))
         }
+        // A dry run wrote nothing, so the Item's synced range is unchanged.
+        assertThat(items.find(one)!!.earliestTxDate).isNull()
         val (leftover, review) = reviews.forRun(run)
         assertThat(review.proposed).isEqualTo(proposed)
         assertThat(review.targets).containsExactly(ReviewTarget("101", "plaid-old-1"), ReviewTarget("1\"02", null))
