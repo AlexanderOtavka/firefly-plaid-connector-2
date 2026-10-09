@@ -6,9 +6,12 @@ import org.springframework.jdbc.core.RowMapper
 import org.springframework.jdbc.core.simple.JdbcClient
 import org.springframework.jdbc.support.GeneratedKeyHolder
 import org.springframework.stereotype.Repository
+import java.sql.Date
 import java.sql.ResultSet
 import java.sql.Timestamp
+import java.sql.Types
 import java.time.Instant
+import java.time.LocalDate
 
 /**
  * Plaid Items.
@@ -188,18 +191,30 @@ class ItemRepository(private val jdbc: JdbcClient) {
             .list()
             .toMap()
 
-    fun recordSuccess(id: Long, added: Int) {
+    fun recordSuccess(id: Long, added: Int, addedDates: ClosedRange<LocalDate>? = null) {
         jdbc.sql(
             """
             UPDATE plaid_item
                SET last_sync_at = now(), last_sync_added = :added, consecutive_failures = 0,
                    last_error_code = NULL, last_error_message = NULL, last_error_at = NULL,
-                   status = CASE WHEN status IN ('login_required', 'error') THEN 'active' ELSE status END
+                   status = CASE WHEN status IN ('login_required', 'error') THEN 'active' ELSE status END,
+                   $WIDEN_TX_DATES
              WHERE id = :id AND status <> 'retired'
             """.trimIndent()
         )
             .param("id", id)
             .param("added", added)
+            .param("earliest", addedDates?.start?.let { Date.valueOf(it) }, Types.DATE)
+            .param("latest", addedDates?.endInclusive?.let { Date.valueOf(it) }, Types.DATE)
+            .update()
+    }
+
+    /** Widens the Item's synced transaction date range to include [dates]. */
+    fun widenTxDates(id: Long, dates: ClosedRange<LocalDate>) {
+        jdbc.sql("UPDATE plaid_item SET $WIDEN_TX_DATES WHERE id = :id")
+            .param("id", id)
+            .param("earliest", Date.valueOf(dates.start), Types.DATE)
+            .param("latest", Date.valueOf(dates.endInclusive), Types.DATE)
             .update()
     }
 
@@ -229,10 +244,17 @@ class ItemRepository(private val jdbc: JdbcClient) {
         /** Consecutive failures, other than ITEM_LOGIN_REQUIRED, before an Item shows as `error`. */
         const val ERROR_THRESHOLD = 3
 
+        /** LEAST and GREATEST ignore NULLs, so a NULL parameter leaves its bound alone. */
+        private const val WIDEN_TX_DATES = """
+            earliest_tx_date = LEAST(earliest_tx_date, CAST(:earliest AS DATE)),
+            latest_tx_date = GREATEST(latest_tx_date, CAST(:latest AS DATE))
+        """
+
         private const val COLUMNS = """
             id, plaid_item_id, institution_id, institution_name, days_requested, linked_at, status,
             replaced_by, retired_at, sync_cursor IS NOT NULL AS has_cursor, polling_since, last_sync_at,
-            last_sync_added, last_error_code, last_error_message, last_error_at, consecutive_failures
+            last_sync_added, last_error_code, last_error_message, last_error_at, consecutive_failures,
+            earliest_tx_date, latest_tx_date
         """
 
         private fun ResultSet.instant(column: String): Instant? = getObject(column, Timestamp::class.java)?.toInstant()
@@ -260,6 +282,8 @@ class ItemRepository(private val jdbc: JdbcClient) {
                 lastErrorMessage = rs.getString("last_error_message"),
                 lastErrorAt = rs.instant("last_error_at"),
                 consecutiveFailures = rs.getInt("consecutive_failures"),
+                earliestTxDate = rs.getObject("earliest_tx_date", Date::class.java)?.toLocalDate(),
+                latestTxDate = rs.getObject("latest_tx_date", Date::class.java)?.toLocalDate(),
             )
         }
     }

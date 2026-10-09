@@ -102,7 +102,11 @@ class PolledSyncOrchestrator(
         // Local change: record per-Item outcomes only once the cycle has been committed.
         for (item in plaidItems) {
             if (item.key !in plaidTransactions.failedItems) {
-                syncOutcomeRecorder.itemSucceeded(item, plaidTransactions.addedByItem[item.key] ?: 0)
+                syncOutcomeRecorder.itemSucceeded(
+                    item,
+                    plaidTransactions.addedByItem[item.key] ?: 0,
+                    plaidTransactions.addedDatesByItem[item.key],
+                )
             }
         }
     }

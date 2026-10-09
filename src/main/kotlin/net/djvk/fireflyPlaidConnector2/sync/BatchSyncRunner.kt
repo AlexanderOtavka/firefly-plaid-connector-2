@@ -74,6 +74,7 @@ class BatchSyncRunner(
             fetched = allPlaidTxs.values.sumOf { it.size },
             counts = counts,
             oldestDate = allPlaidTxs.values.flatten().minOfOrNull { it.date },
+            newestDate = allPlaidTxs.values.flatten().maxOfOrNull { it.date },
             dryRun = dryRun,
             reviews = reviews,
         )

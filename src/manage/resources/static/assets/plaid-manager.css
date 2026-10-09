@@ -317,6 +317,48 @@ p:last-child { margin-bottom: 0; }
 .runs td { white-space: nowrap; }
 .runs td:nth-child(5) { white-space: normal; }
 
+/* Backfill rows open in a dialog. */
+.run-row { cursor: pointer; }
+.run-row:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+.modal {
+    width: min(40rem, calc(100vw - 2rem));
+    max-height: calc(100dvh - 2rem);
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: var(--text);
+    overflow: visible;
+}
+.modal::backdrop { background: rgba(0, 0, 0, 0.55); }
+.modal-content {
+    display: flex;
+    flex-direction: column;
+    max-height: calc(100dvh - 2rem);
+    margin: 0;
+    box-shadow: 0 8px 30px rgba(0, 0, 0, 0.35);
+}
+.modal-content .box-header { flex: none; }
+.modal-details { margin: 0; overflow-y: auto; padding: 12px 15px 15px; row-gap: 8px; }
+.modal-content:focus { outline: none; }
+.modal-details .run-error { min-width: 0; }
+.modal-close {
+    flex: none;
+    width: 40px;
+    height: 40px;
+    margin: -6px -4px -6px 0;
+    border: 0;
+    border-radius: 3px;
+    background: none;
+    color: var(--muted);
+    font: inherit;
+    font-size: 28px;
+    line-height: 1;
+    cursor: pointer;
+}
+.modal-close:hover { background: var(--btn-default-hover); color: var(--heading); }
+.modal-close:focus-visible { outline: 2px solid var(--focus); outline-offset: 0; }
+.item-count { margin-left: 6px; }
+
 /* Forms */
 .form-title { margin: 0 0 10px; font-size: 16px; }
 .form-grid {
@@ -356,7 +398,7 @@ fieldset .checkbox + .checkbox { margin-top: 4px; }
 @media (max-width: 767px) {
     body { font-size: 15px; }
     .main-header .logo { width: auto; flex: 1 1 auto; }
-    .main-header .navbar { flex: 0 1 auto; }
+    .main-header .navbar { flex: 0 1 auto; flex-wrap: wrap; }
     .main-header .nav-link { padding: 0 10px; }
     .content { padding: 10px 10px 2rem; }
     .page-title { font-size: 21px; }
@@ -365,6 +407,12 @@ fieldset .checkbox + .checkbox { margin-top: 4px; }
     .actions .btn { flex: 1 1 calc(50% - 4px); }
     .actions .btn-danger { margin-left: 0; }
     .form-actions .btn { width: 100%; }
+    /* Most of the screen, so the stacked row reads like a page of its own. */
+    .modal { width: calc(100vw - 1.5rem); }
+    .modal-content { min-height: min(32rem, calc(100dvh - 2rem)); }
+    .modal-details { grid-template-columns: 1fr; gap: 0; }
+    .modal-details dt { color: var(--muted); font-size: 13px; font-weight: 600; }
+    .modal-details dd { font-size: 16px; margin-bottom: 10px; }
     /* Mapping rows stack into cards: name and type, then the Firefly account, then Enabled. */
     .table-responsive:has(.accounts) { overflow-x: visible; }
     .accounts thead { display: none; }

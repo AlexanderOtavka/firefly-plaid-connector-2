@@ -85,7 +85,8 @@ class BackfillRunRepository(private val jdbc: JdbcClient) {
                    duplicates = COALESCE(:duplicates, duplicates), failed = COALESCE(:failed, failed),
                    matched = COALESCE(:matched, matched), updated = COALESCE(:updated, updated),
                    needs_review = COALESCE(:needsReview, needs_review),
-                   oldest_date = COALESCE(:oldestDate, oldest_date), error = :error
+                   oldest_date = COALESCE(:oldestDate, oldest_date),
+                   newest_date = COALESCE(:newestDate, newest_date), error = :error
              WHERE id = :id AND status IN ('pending', 'running')
             """.trimIndent()
         )
@@ -99,6 +100,7 @@ class BackfillRunRepository(private val jdbc: JdbcClient) {
             .param("updated", outcome?.counts?.updated, java.sql.Types.INTEGER)
             .param("needsReview", outcome?.counts?.needsReview, java.sql.Types.INTEGER)
             .param("oldestDate", outcome?.oldestDate?.let { Date.valueOf(it) }, java.sql.Types.DATE)
+            .param("newestDate", outcome?.newestDate?.let { Date.valueOf(it) }, java.sql.Types.DATE)
             .param("error", Redaction.redact(error))
             .update()
     }
@@ -128,6 +130,7 @@ class BackfillRunRepository(private val jdbc: JdbcClient) {
                 needsReview = rs.getInt("needs_review").takeUnless { rs.wasNull() },
                 oldestDate = rs.getObject("oldest_date", Date::class.java)?.toLocalDate(),
                 error = rs.getString("error"),
+                newestDate = rs.getObject("newest_date", Date::class.java)?.toLocalDate(),
             )
         }
     }
