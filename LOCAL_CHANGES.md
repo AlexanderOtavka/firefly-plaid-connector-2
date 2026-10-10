@@ -168,3 +168,21 @@ changes.
   argument to `SyncOutcomeRecorder.itemSucceeded`.
 - Selecting a backfill row opens it in a dialog, one field per line, which reads better on a phone
   than the table's sideways scroll.
+
+## 2026-10-10: file import links for history Plaid does not have
+
+Some institutions give Plaid only a few months of history, whatever `days_requested` asks
+for; the rest only exists as a file exported from the bank, imported with a separate tool
+such as the Firefly III Data Importer. In the manage tree only, no migration:
+
+- `fireflyPlaidConnector2.manage.importerUrl` (env `FIREFLYPLAIDCONNECTOR2_MANAGE_IMPORTERURL`):
+  a path on the dashboard's origin or an http(s) URL. Unset or blank, nothing changes; any
+  other value is ignored with a warning.
+- When set, each mapped account gets an "Import a file" link and the date a file import must
+  stop before. File imports are not matched against what Plaid imported, so they must cover
+  only older dates. The date is `ItemRepository.earliestTxDateByFireflyAccount`: per Firefly
+  account, the minimum `plaid_item.earliest_tx_date` (V3) over every Item with an account
+  mapped to it, replaced and retired Items included. An Item has one range for all its
+  accounts, so the date is never later than the account's own oldest import, and may be
+  earlier. With nothing synced yet, the account says to import only dates before Plaid's
+  oldest transaction.
