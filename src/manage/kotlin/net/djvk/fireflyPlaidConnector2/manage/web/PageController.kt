@@ -26,6 +26,17 @@ import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.servlet.ModelAndView
 
+/**
+ * The file importer link for `fireflyPlaidConnector2.manage.importerUrl`, or null for none:
+ * the property is unset or blank, or is neither a path on this origin nor an http(s) URL. It
+ * is rendered as a link on every dashboard load, so nothing else (`javascript:`, `//host`).
+ */
+fun importerLink(configured: String): String? {
+    val url = configured.trim()
+    val path = url.startsWith("/") && !url.startsWith("//")
+    return url.takeIf { path || Regex("(?i)^https?://[^/]").containsMatchIn(it) }
+}
+
 @Controller
 @ConditionalOnProperty(name = [SYNC_MODE_PROPERTY], havingValue = MANAGE_MODE)
 class PageController(
@@ -41,8 +52,20 @@ class PageController(
     /** Items a Plaid plan allows, retired ones included; 0 hides the count's limit. */
     @Value("\${fireflyPlaidConnector2.manage.itemLimit:10}")
     private val itemLimit: Int,
+    /**
+     * Where to import a bank's file export, for history Plaid does not have: a Firefly III
+     * Data Importer, for example. Unset, the dashboard shows no file import links.
+     */
+    @Value("\${fireflyPlaidConnector2.manage.importerUrl:}")
+    importerUrl: String,
 ) {
     private val logger = LoggerFactory.getLogger(this::class.java)
+
+    private val importerUrl: String? = importerLink(importerUrl).also {
+        if (it == null && importerUrl.isNotBlank()) {
+            logger.warn("Ignoring fireflyPlaidConnector2.manage.importerUrl: not a path or an http(s) URL")
+        }
+    }
 
     @GetMapping("/")
     fun dashboard(model: Model): String {
@@ -61,6 +84,8 @@ class PageController(
         model.addAttribute("defaultTimeoutHours", DEFAULT_BACKFILL_TIMEOUT_SECONDS / 3600)
         model.addAttribute("maxTimeoutHours", MAX_BACKFILL_TIMEOUT_SECONDS / 3600)
         model.addAttribute("linkDaysRequested", LINK_DAYS_REQUESTED)
+        model.addAttribute("importerUrl", importerUrl)
+        model.addAttribute("importBefore", if (importerUrl == null) emptyMap() else items.earliestTxDateByFireflyAccount())
         return "dashboard"
     }
 
