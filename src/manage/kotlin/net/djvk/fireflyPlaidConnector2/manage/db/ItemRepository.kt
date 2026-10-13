@@ -218,6 +218,28 @@ class ItemRepository(private val jdbc: JdbcClient) {
             .update()
     }
 
+    /**
+     * For each Firefly account, the earliest transaction date synced from Plaid by any Item with
+     * an account mapped to it, replaced and retired Items included (they keep their mapping).
+     * Everything from that date on came from Plaid, so a file import must stop before it. An
+     * Item records one range for all its accounts, so for an Item with several accounts the date
+     * can be earlier than that account's own oldest import, never later.
+     */
+    fun earliestTxDateByFireflyAccount(): Map<Int, LocalDate> =
+        jdbc.sql(
+            """
+            SELECT a.firefly_account_id, MIN(i.earliest_tx_date) AS earliest_tx_date
+              FROM plaid_account a JOIN plaid_item i ON i.id = a.item_id
+             WHERE a.firefly_account_id IS NOT NULL AND i.earliest_tx_date IS NOT NULL
+             GROUP BY a.firefly_account_id
+            """.trimIndent()
+        )
+            .query { rs, _ ->
+                rs.getInt("firefly_account_id") to rs.getObject("earliest_tx_date", Date::class.java).toLocalDate()
+            }
+            .list()
+            .toMap()
+
     fun recordFailure(id: Long, code: String?, message: String?) {
         jdbc.sql(
             """

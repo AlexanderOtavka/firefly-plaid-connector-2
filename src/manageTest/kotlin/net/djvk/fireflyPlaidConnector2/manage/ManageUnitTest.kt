@@ -30,6 +30,7 @@ import net.djvk.fireflyPlaidConnector2.manage.web.FireflyUser
 import net.djvk.fireflyPlaidConnector2.manage.web.NAV_LINKS_PROPERTY
 import net.djvk.fireflyPlaidConnector2.manage.web.NavLink
 import net.djvk.fireflyPlaidConnector2.manage.web.NavLinks
+import net.djvk.fireflyPlaidConnector2.manage.web.importerLink
 import net.djvk.fireflyPlaidConnector2.manage.web.isAllowed
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.assertThatThrownBy
@@ -258,6 +259,21 @@ class ManageRulesTest {
     fun `redaction removes access tokens`() {
         assertThat(Redaction.redact("failed for access-production-1234-abcd today"))
             .isEqualTo("failed for [redacted token] today")
+    }
+}
+
+class ImporterLinkTest {
+    @Test
+    fun `the importer link is a path on this origin or an http(s) URL, and unset means none`() {
+        assertThat(importerLink("")).isNull()
+        assertThat(importerLink("   ")).isNull()
+        assertThat(importerLink(" /importer/ ")).isEqualTo("/importer/")
+        assertThat(importerLink("https://importer.example.com/")).isEqualTo("https://importer.example.com/")
+        assertThat(importerLink("HTTP://importer.example.com")).isEqualTo("HTTP://importer.example.com")
+        assertThat(importerLink("javascript:alert(1)")).isNull()
+        assertThat(importerLink("//elsewhere.example.com/")).isNull()
+        assertThat(importerLink("https:///nohost")).isNull()
+        assertThat(importerLink("importer/")).isNull()
     }
 }
 

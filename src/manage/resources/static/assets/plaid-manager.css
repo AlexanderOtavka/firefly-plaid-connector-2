@@ -314,6 +314,8 @@ p:last-child { margin-bottom: 0; }
 .table .label + .label { margin-left: 4px; }
 .table td .btn + .btn { margin-left: 4px; }
 .run-error { margin-top: 4px; font-size: 13px; min-width: 14rem; }
+.file-import { min-width: 12rem; }
+.file-import .help-text { display: block; margin-top: 2px; }
 .runs td { white-space: nowrap; }
 .runs td:nth-child(5) { white-space: normal; }
 

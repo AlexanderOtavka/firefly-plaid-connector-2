@@ -77,6 +77,7 @@ private const val NEW_TOKEN = "access-production-new-secret-0002"
         "fireflyPlaidConnector2.manage.publicBaseUrl=https://firefly.example.com",
         "fireflyPlaidConnector2.manage.allowedHosts=localhost",
         "fireflyPlaidConnector2.manage.allowedEmails=owner@example.com",
+        "fireflyPlaidConnector2.manage.importerUrl=/importer/",
         "fireflyPlaidConnector2.plaid.url=http://127.0.0.1:9",
         "fireflyPlaidConnector2.plaid.clientId=test-client",
         "fireflyPlaidConnector2.plaid.secret=test-secret",
@@ -217,6 +218,17 @@ class ManageWebTest {
         assertThat(body).contains("2 of 10 used")
         assertThat(body).containsPattern("2024-09-27</span> to\\s*<span[^>]*>2026-10-07<")
         assertThat(body).contains("none synced yet")
+    }
+
+    @Test
+    fun `mapped accounts link to the file importer, with the date a file import must stop before`() {
+        val before = perform(get("/").with(owner)).response.contentAsString
+        assertThat(before).contains("<a href=\"/importer/\" class=\"file-import-link\">Import a file</a>")
+        assertThat(before).contains("synced yet: only dates before").doesNotContain("only dates before 2")
+
+        items.widenTxDates(card, LocalDate.of(2026, 7, 10)..LocalDate.of(2026, 10, 2))
+        val after = perform(get("/").with(owner)).response.contentAsString
+        assertThat(after).contains("only dates before 2026-07-10").doesNotContain("synced yet: only dates before")
     }
 
     @Test

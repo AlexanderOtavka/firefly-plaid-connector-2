@@ -75,17 +75,30 @@
             </dl>
             <div class="table-responsive">
                 <table class="table accounts">
-                    <thead><tr><th>Account</th><th>Type</th><th>Firefly account</th><th>Enabled</th></tr></thead>
+                    <thead><tr><th>Account</th><th>Type</th><th>Firefly account</th><th>Enabled</th>
+                        <th th:if="${importerUrl != null}">Older history</th></tr></thead>
                     <tbody>
                     <tr th:each="account : ${item.accounts}">
                         <td th:text="|${account.name} ${account.mask != null ? '…' + account.mask : ''}|">Card …1234</td>
                         <td th:text="|${account.type} ${account.subtype ?: ''}|">credit</td>
                         <td th:text="${account.fireflyAccountId == null ? '—' : (fireflyAccounts[account.fireflyAccountId] ?: '#' + account.fireflyAccountId)}">Credit card</td>
                         <td th:text="${account.enabled ? 'yes' : 'no'}">yes</td>
+                        <td th:if="${importerUrl != null}" class="file-import">
+                            <th:block th:if="${account.fireflyAccountId != null}">
+                                <a th:href="${importerUrl}" class="file-import-link">Import a file</a>
+                                <span class="help-text" th:if="${importBefore[account.fireflyAccountId] != null}"
+                                      th:text="|only dates before ${importBefore[account.fireflyAccountId]}|">only dates before 2024-09-27</span>
+                                <span class="help-text" th:unless="${importBefore[account.fireflyAccountId] != null}">nothing
+                                    synced yet: only dates before Plaid's oldest transaction</span>
+                            </th:block>
+                        </td>
                     </tr>
                     </tbody>
                 </table>
             </div>
+            <p class="help-text" th:if="${importerUrl != null and item.isLive}">A file import is not matched
+                against what Plaid imported, so it must stop before the date shown: the earliest
+                transaction synced from Plaid into that Firefly account.</p>
         </div>
         <div class="box-footer actions" th:if="${item.isLive}">
             <a class="btn btn-default" th:href="@{/items/{id}/mapping(id=${item.id})}">Account mapping</a>

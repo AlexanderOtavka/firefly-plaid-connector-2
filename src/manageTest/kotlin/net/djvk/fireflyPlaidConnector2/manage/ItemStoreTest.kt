@@ -224,6 +224,35 @@ class ItemStoreTest {
     }
 
     @Test
+    fun `file imports must stop before the earliest Plaid date of any Item mapped to the Firefly account`() {
+        // A replaced Item: its account keeps its mapping to Firefly account 8.
+        val old = newItem("old")
+        newAccount(old, "old-card")
+        accounts.setMapping(accountId("old-card"), old, 8, true)
+        items.widenTxDates(old, LocalDate.of(2026, 6, 19)..LocalDate.of(2026, 8, 1))
+        accounts.disableAllFor(old)
+
+        val card = newItem("card")
+        newAccount(card, "card-a")
+        newAccount(card, "card-b")
+        accounts.setMapping(accountId("card-a"), card, 8, true)
+        accounts.setMapping(accountId("card-b"), card, 9, true)
+        items.widenTxDates(card, LocalDate.of(2026, 7, 10)..LocalDate.of(2026, 10, 1))
+        assertThat(items.earliestTxDateByFireflyAccount()).isEqualTo(
+            mapOf(8 to LocalDate.of(2026, 6, 19), 9 to LocalDate.of(2026, 7, 10))
+        )
+
+        // Unmapped accounts, and Items with nothing synced, have no date.
+        val other = newItem("other")
+        newAccount(other, "unmapped")
+        items.widenTxDates(other, LocalDate.of(2024, 1, 1)..LocalDate.of(2024, 2, 1))
+        val fresh = newItem("fresh")
+        newAccount(fresh, "fresh-card")
+        accounts.setMapping(accountId("fresh-card"), fresh, 10, true)
+        assertThat(items.earliestTxDateByFireflyAccount().keys).containsExactlyInAnyOrder(8, 9)
+    }
+
+    @Test
     fun `stored errors are redacted`() {
         val one = newItem("one")
         newAccount(one, "a")
