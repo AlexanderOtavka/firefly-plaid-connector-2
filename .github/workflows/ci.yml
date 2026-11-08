@@ -5,9 +5,6 @@ on:
   push:
     branches:
       - main
-  # The weekly update dispatches this on its branch (a PR opened with GITHUB_TOKEN gets only
-  # a pull_request run held for approval), and on main after merging it (that push gets no
-  # push run).
   workflow_dispatch:
 
 concurrency:
@@ -127,33 +124,3 @@ jobs:
     permissions:
       contents: read
       packages: write
-
-  # Merges the weekly update once everything above passed on its branch.
-  automerge:
-    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/automated/update-deps'
-    needs: [check, container]
-    runs-on: ubuntu-latest
-    permissions:
-      actions: write
-      contents: write
-      pull-requests: write
-    steps:
-      - name: Merge the update PR, then build and publish main
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
-        run: |
-          set -euo pipefail
-          pr="$(gh pr list --head automated/update-deps --state open --json number,headRefOid \
-            --jq ".[] | select(.headRefOid == \"${GITHUB_SHA}\") | .number")"
-          if [ -z "$pr" ]; then
-            echo "No open update PR at ${GITHUB_SHA}; nothing to merge."
-            exit 0
-          fi
-          # Opening the PR with GITHUB_TOKEN still creates a pull_request run, held for
-          # approval and marked failed. Delete it so the PR doesn't carry its red X.
-          gh run list --branch automated/update-deps --commit "${GITHUB_SHA}" \
-            --event pull_request --json databaseId --jq '.[].databaseId' |
-            while read -r run; do gh run delete "$run"; done
-          gh pr merge "$pr" --squash --delete-branch
-          gh workflow run ci.yml --ref main

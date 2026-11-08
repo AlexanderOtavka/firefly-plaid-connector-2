@@ -20,6 +20,17 @@ This is an independently maintained fork of
 It is built with Nix (`nix build`, `nix flake check`) and published as
 `ghcr.io/alexanderotavka/firefly-plaid-connector-2`. See `LOCAL_CHANGES.md` for the full list.
 
+[Renovate](https://docs.renovatebot.com) (`renovate.json`) updates dependencies on Saturday
+mornings (UTC): `flake.lock` (nixpkgs: Gradle, the JDK and JRE, PostgreSQL for the tests, the
+image's CA bundle) and the GitHub Actions. Minor and patch updates come as one PR, the
+`flake.lock` refresh as another, and each major upgrade as its own. Every one merges itself
+once CI passes, and the merge publishes a new image; one CI fails on stays open for a person.
+Library versions in `build.gradle.kts` and `gradle/libs.versions.toml` are left to a person,
+because the Nix build only sees the artifacts pinned in `nix/deps.json`, which Renovate can't
+regenerate. After changing them, or when a `flake.lock` refresh brings a Gradle that fetches
+different artifacts (CI fails on its PR), regenerate it:
+`nix build .#firefly-plaid-connector-2.mitmCache.updateScript && ./result`.
+
 # Concepts
 ## Mode
 The connector can be run in either `batch` or `polled` mode.
