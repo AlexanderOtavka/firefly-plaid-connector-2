@@ -1,0 +1,23 @@
+// Resolves plugins and dependencies only from the local Maven repository in
+// $NIX_MAVEN_REPO (nix/maven-repo.nix), in place of the repositories the build declares.
+def repo = new File(System.getenv("NIX_MAVEN_REPO")).toURI()
+
+// Gradle reads a .pom first and follows it to the .module; when it uses the .module, it
+// records only that in verification-metadata.xml, so the POM may be missing here. Look for
+// the .module directly.
+def offlineRepo = { handler ->
+  handler.maven {
+    url = repo
+    metadataSources {
+      gradleMetadata()
+      mavenPom()
+    }
+  }
+}
+
+beforeSettings { settings ->
+  settings.pluginManagement.repositories.clear()
+  offlineRepo(settings.pluginManagement.repositories)
+  settings.dependencyResolutionManagement.repositoriesMode.set(RepositoriesMode.PREFER_SETTINGS)
+  offlineRepo(settings.dependencyResolutionManagement.repositories)
+}

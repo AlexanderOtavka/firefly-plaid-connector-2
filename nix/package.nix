@@ -1,16 +1,38 @@
 {
   lib,
   stdenv,
-  gradle_8,
+  callPackage,
+  gradle-packages,
   jdk17_headless,
   jre17_minimal,
   makeWrapper,
 }: let
   # build.gradle.kts targets Java 17 (sourceCompatibility and jvmTarget), which is also what
-  # the Paketo image this replaces ran on. Gradle 8, because the Kotlin 1.9 Gradle plugin
-  # predates Gradle 9.
+  # the Paketo image this replaces ran on.
   jdk = jdk17_headless;
-  gradle = gradle_8.override {java = jdk;};
+
+  # The Gradle the wrapper names, checked against the wrapper's distributionSha256Sum, so a
+  # Nix build and ./gradlew (which Renovate runs to record dependencies) agree. Renovate
+  # bumps both lines together.
+  wrapperProperties = builtins.readFile ../gradle/wrapper/gradle-wrapper.properties;
+  gradleVersion = builtins.head (builtins.match
+    ''.*distributionUrl=https\\://services\.gradle\.org/distributions/gradle-([^-]+)-bin\.zip.*''
+    wrapperProperties);
+  gradleSha256 = builtins.head (builtins.match ''.*distributionSha256Sum=([0-9a-f]{64}).*'' wrapperProperties);
+  gradle =
+    (gradle-packages.mkGradle {
+      version = gradleVersion;
+      hash = builtins.convertHash {
+        hash = gradleSha256;
+        hashAlgo = "sha256";
+        toHashFormat = "sri";
+      };
+      defaultJava = jdk;
+    }).wrapped;
+
+  mavenRepo = callPackage ./maven-repo.nix {
+    verificationMetadata = ../gradle/verification-metadata.xml;
+  };
 
   # A JRE rather than the whole JDK: every runtime module, without the compiler, debugger,
   # and other development tools, or the desktop libraries a non-headless JDK pulls in.
@@ -50,6 +72,8 @@
       ../settings.gradle.kts
       ../gradle.properties
       ../gradle/libs.versions.toml
+      # Gradle checks every artifact against it, in the Nix build too.
+      ../gradle/verification-metadata.xml
       ../specs
       ../src
     ];
@@ -64,20 +88,12 @@ in
 
     nativeBuildInputs = [gradle makeWrapper];
 
-    # Every Maven artifact the build fetches, pinned by hash in deps.json. Regenerate it after
-    # changing dependencies in build.gradle.kts, or bumping nixpkgs' Gradle:
-    #   nix build .#firefly-plaid-connector-2.mitmCache.updateScript && ./result
-    mitmCache = gradle.fetchDeps {
-      pkg = finalAttrs.finalPackage;
-      data = ./deps.json;
-    };
-    __darwinAllowLocalNetworking = true;
+    # Every Maven artifact the build needs, from gradle/verification-metadata.xml. The gradle
+    # setup hook runs Gradle --offline, and this init script points it at the local repo.
+    env.NIX_MAVEN_REPO = mavenRepo;
 
-    gradleFlags = ["-Dfile.encoding=utf-8"];
+    gradleFlags = ["-Dfile.encoding=utf-8" "--init-script" "${./offline-repo.gradle}"];
     gradleBuildTask = "bootJar";
-    # nixDownloadDeps resolves every configuration, but some artifacts (Kotlin compiler
-    # plugins, the test launcher) are only fetched while tasks run, so run those too.
-    gradleUpdateTask = "nixDownloadDeps bootJar testClasses";
 
     installPhase = ''
       runHook preInstall
@@ -91,7 +107,7 @@ in
       runHook postInstall
     '';
 
-    passthru = {inherit gradle jdk jre;};
+    passthru = {inherit gradle jdk jre mavenRepo;};
 
     meta = {
       description = "Syncs Plaid transactions into Firefly III, with a dashboard for managing bank links";
@@ -100,7 +116,7 @@ in
       mainProgram = "firefly-plaid-connector-2";
       sourceProvenance = with lib.sourceTypes; [
         fromSource
-        binaryBytecode # Maven dependencies, from the mitm cache
+        binaryBytecode # Maven dependencies, from gradle/verification-metadata.xml
       ];
     };
   })

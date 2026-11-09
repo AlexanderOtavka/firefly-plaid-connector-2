@@ -12,12 +12,6 @@
   "nix": {
     "enabled": true
   },
-  "gradle": {
-    "enabled": false
-  },
-  "gradle-wrapper": {
-    "enabled": false
-  },
   "lockFileMaintenance": {
     "enabled": true,
     "schedule": [
