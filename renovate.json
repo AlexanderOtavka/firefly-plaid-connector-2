@@ -17,5 +17,18 @@
     "schedule": [
       "* 0-8 * * 6"
     ]
-  }
+  },
+  "packageRules": [
+    {
+      "description": "The Kotlin Gradle plugins and the Kotlin libraries only build at the same version, so a major comes as one PR.",
+      "matchPackageNames": [
+        "org.jetbrains.kotlin:*",
+        "org.jetbrains.kotlin.*"
+      ],
+      "matchUpdateTypes": [
+        "major"
+      ],
+      "groupName": "kotlin"
+    }
+  ]
 }
