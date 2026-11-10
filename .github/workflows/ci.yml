@@ -5,9 +5,6 @@ on:
   push:
     branches:
       - main
-  # The weekly update dispatches this on its branch (a PR opened with GITHUB_TOKEN gets only
-  # a pull_request run held for approval), and on main after merging it (that push gets no
-  # push run).
   workflow_dispatch:
 
 concurrency:
@@ -26,15 +23,16 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      # The wrapper is still committed for building without Nix, so keep checking that its
-      # jar is a genuine Gradle release.
+      # The wrapper picks the Gradle the Nix build uses too (nix/package.nix), and Renovate
+      # runs it to record dependencies, so keep checking that its jar is a genuine release.
       - uses: gradle/actions/wrapper-validation@v4
 
       - uses: DeterminateSystems/determinate-nix-action@v3
 
-      # Builds the jar and the image from the pinned deps.json, and runs the Gradle tests,
-      # the dashboard's against a throwaway PostgreSQL, and the NixOS VM checks against a
-      # real Firefly III (KVM, which hosted Linux runners have).
+      # Builds the jar and the image from the artifacts pinned in
+      # gradle/verification-metadata.xml, and runs the Gradle tests, the dashboard's against a
+      # throwaway PostgreSQL, and the NixOS VM checks against a real Firefly III (KVM, which
+      # hosted Linux runners have).
       - name: nix flake check
         run: nix flake check -L
 
@@ -127,33 +125,3 @@ jobs:
     permissions:
       contents: read
       packages: write
-
-  # Merges the weekly update once everything above passed on its branch.
-  automerge:
-    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/automated/update-deps'
-    needs: [check, container]
-    runs-on: ubuntu-latest
-    permissions:
-      actions: write
-      contents: write
-      pull-requests: write
-    steps:
-      - name: Merge the update PR, then build and publish main
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
-        run: |
-          set -euo pipefail
-          pr="$(gh pr list --head automated/update-deps --state open --json number,headRefOid \
-            --jq ".[] | select(.headRefOid == \"${GITHUB_SHA}\") | .number")"
-          if [ -z "$pr" ]; then
-            echo "No open update PR at ${GITHUB_SHA}; nothing to merge."
-            exit 0
-          fi
-          # Opening the PR with GITHUB_TOKEN still creates a pull_request run, held for
-          # approval and marked failed. Delete it so the PR doesn't carry its red X.
-          gh run list --branch automated/update-deps --commit "${GITHUB_SHA}" \
-            --event pull_request --json databaseId --jq '.[].databaseId' |
-            while read -r run; do gh run delete "$run"; done
-          gh pr merge "$pr" --squash --delete-branch
-          gh workflow run ci.yml --ref main
