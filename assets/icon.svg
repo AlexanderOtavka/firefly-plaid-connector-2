@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Firefly">
+  <defs><clipPath id="tile"><rect width="64" height="64" rx="14"/></clipPath></defs>
+  <rect width="64" height="64" rx="14" fill="#3b0764"/>
+  <g clip-path="url(#tile)" fill="#a855f7" fill-opacity="0.22">
+    <rect x="12" width="6" height="64"/>
+    <rect x="46" width="6" height="64"/>
+    <rect y="12" width="64" height="6"/>
+    <rect y="46" width="64" height="6"/>
+  </g>
+  <g fill="#c4b5fd">
+    <ellipse cx="22.5" cy="33" rx="7" ry="14" transform="rotate(28 22.5 33)"/>
+    <ellipse cx="41.5" cy="33" rx="7" ry="14" transform="rotate(-28 41.5 33)"/>
+  </g>
+  <g stroke="#c4b5fd" stroke-width="2.5" stroke-linecap="round" fill="none">
+    <path d="M30 13 L25 7"/>
+    <path d="M34 13 L39 7"/>
+  </g>
+  <g fill="#c4b5fd">
+    <circle cx="32" cy="15.5" r="4.5"/>
+    <ellipse cx="32" cy="24" rx="6" ry="5.5"/>
+  </g>
+  <ellipse cx="32" cy="40.5" rx="7.5" ry="12" fill="#facc15"/>
+</svg>
